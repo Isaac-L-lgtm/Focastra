@@ -88,7 +88,7 @@ struct ContentView: View {
                 withAnimation {
                     showLoading = false
                 }
-                // Minimal: cleanup missed sessions once at launch so Home shows correct state
+                
                 var sessions = loadScheduledSessions()
                 removeMissedSessionsForToday(&sessions, now: Date())
                 saveScheduledSessions(sessions)
