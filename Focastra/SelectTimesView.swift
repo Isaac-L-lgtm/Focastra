@@ -24,7 +24,6 @@ struct SelectTimesView: View {
     @State private var selectedTime = Date()
     @State private var durationTime = "30 mins"
 
-    // Use explicit labels mapped to minutes to avoid string parsing errors
     private let durationOptions: [(label: String, minutes: Int)] = [
         ("1 mins", 1), //remove
         ("30 mins", 30),
