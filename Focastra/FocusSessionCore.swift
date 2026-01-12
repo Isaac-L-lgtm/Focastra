@@ -1,3 +1,10 @@
+//
+//  FocusSessionCore.swift
+//  Focastra
+//
+//  Created by Isaac Law on 2025-11-20.
+//
+
 import Foundation
 
 // MARK: - Models
