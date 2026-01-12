@@ -42,6 +42,9 @@ struct PersistedCurrentSession: Codable, Equatable {
     var endDate: Date
     var didSucceed: Bool
     var didFail: Bool
+
+    // NEW (optional) so old data still loads
+    var scheduledSessionID: UUID?
 }
 
 // MARK: - Persistence
@@ -128,9 +131,13 @@ func removeMissedSessionsForToday(_ sessions: inout [ScheduledSession], now: Dat
 
 // Call this when the user actually presses "Start" and you begin your existing timer.
 // It returns a snapshot you can save for restoration later.
-func makeCurrentSessionSnapshot(durationMinutes: Int, start: Date) -> PersistedCurrentSession {
+func makeCurrentSessionSnapshot(durationMinutes: Int, start: Date, scheduledSessionID: UUID?) -> PersistedCurrentSession {
     let end = start.addingTimeInterval(TimeInterval(durationMinutes * 60))
-    return PersistedCurrentSession(isActive: true, endDate: end, didSucceed: false, didFail: false)
+    return PersistedCurrentSession(isActive: true,
+                                   endDate: end,
+                                   didSucceed: false,
+                                   didFail: false,
+                                   scheduledSessionID: scheduledSessionID)
 }
 
 // Recompute remaining seconds from a snapshot and "now" (pure helper).
