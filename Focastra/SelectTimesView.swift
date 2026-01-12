@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-
+//WIP
 struct SelectTimesView: View {
     // Receive the chosen dates as a value
     let selectedDates: Set<DateComponents>
