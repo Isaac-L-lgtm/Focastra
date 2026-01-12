@@ -7,16 +7,13 @@
 
 import SwiftUI
 
-//WIP
 struct FocusSessionView: View {
-    @Environment(\.scenePhase) private var scenePhase //from mentor
-    @Environment(\.dismiss) private var dismiss
+
+    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var sessionTimer: FocusSessionTimer
 
-    // Keep only the configuration passed in
-    @State private var selectedDuration: Int // minutes
-
-    // Optional scheduled session info passed in by the caller
+    // configuration passed in
+    @State private var selectedDuration: Int
     @State private var scheduledSession: ScheduledSession? = nil
 
     init(durationMinutes: Int = 30, scheduled: ScheduledSession? = nil) {
@@ -25,8 +22,6 @@ struct FocusSessionView: View {
     }
 
     var body: some View {
-        //AppLogo()
-        
         ZStack {
             VStack {
                 Text("Focus Session")
@@ -34,34 +29,47 @@ struct FocusSessionView: View {
                     .fontWeight(.bold)
                     .padding(.top, 100)
                     .padding(.bottom, 100)
-                
+
                 // Timer display
                 Text(formatTime(sessionTimer.timeRemaining))
                     .font(.custom("Impact", size: 60))
                     .fontWeight(.bold)
                     .padding(.bottom, 50)
-                
-                // Single button: start and stay here
+
+                // Start button (only starts when rules are met)
                 Button {
-                    if !sessionTimer.isFocusing {
-                        if let sched = scheduledSession, (sched.status == .completed || sched.status == .failed) {
+                    // already focusing? do nothing
+                    if sessionTimer.isFocusing { return }
+
+                    // cannot restart completed/failed session
+                    if let sched = scheduledSession, (sched.status == .completed || sched.status == .failed) {
+                        return
+                    }
+
+                    // ✅ Start allowed only if:
+                    // - date is today
+                    // - time is coming up (now must be <= scheduled time)
+                    if let sched = scheduledSession {
+                        let now = Date()
+                        let cal = Calendar.current
+
+                        if !cal.isDate(sched.scheduledDate, inSameDayAs: now) {
                             return
                         }
-                        // Enforce: can only start on or before scheduled time, and only if date is today
-                        if let sched = scheduledSession {
-                            let now = Date()
-                            let cal = Calendar.current
-                            // If not today or now is after scheduled time, do not start
-                            if !cal.isDate(sched.scheduledDate, inSameDayAs: now) || now > sched.scheduledDate {
-                                // Simply return without starting; caller can navigate back to scheduling if desired
-                                return
-                            }
+
+                        if now > sched.scheduledDate {
+                            // missed it (HomePage will remove it anyway)
+                            return
                         }
-                        sessionTimer.start(durationMinutes: selectedDuration)
-                        // Persist a snapshot so we can restore if the app restarts
-                        let snapshot = makeCurrentSessionSnapshot(durationMinutes: selectedDuration, start: Date())
-                        saveCurrentSessionSnapshot(snapshot)
                     }
+
+                    // Start timer
+                    sessionTimer.start(durationMinutes: selectedDuration)
+
+                    // Save snapshot so we can restore if app restarts
+                    let snapshot = makeCurrentSessionSnapshot(durationMinutes: selectedDuration, start: Date())
+                    saveCurrentSessionSnapshot(snapshot)
+
                 } label: {
                     Text(sessionTimer.isFocusing ? "Focusing..." : "Start Focus Session")
                         .font(.custom("Impact", size: 40))
@@ -70,89 +78,104 @@ struct FocusSessionView: View {
                         .foregroundStyle(.white)
                         .opacity(sessionTimer.isFocusing ? 0.6 : 1.0)
                 }
-                .disabled(sessionTimer.isFocusing || ((scheduledSession?.status == .completed) || (scheduledSession?.status == .failed)))
-                
-                // Encouragement text when focusing
+                .disabled(sessionTimer.isFocusing || (scheduledSession?.status == .completed) || (scheduledSession?.status == .failed))
+
+                // encouragement
                 if sessionTimer.isFocusing {
                     Text("Stay focused for \(selectedDuration) minutes!")
                         .font(.headline)
                         .padding(.top, 20)
                 }
-                
-                // Session complete message
+
+                // complete message
                 if sessionTimer.sessionComplete {
-                    Text(sessionTimer.rewardEarned ? "🎉 Session Complete! Reward Earned!" : "⛔ Session Ended Early. No reward.")
+                    Text(sessionTimer.rewardEarned ? "✅ Session Complete! Reward Earned!" : "⛔ Session Failed / Ended Early.\nNo reward.")
                         .font(.headline)
                         .padding(.top, 20)
+                        .multilineTextAlignment(.center)
                 }
-                
+
                 Spacer()
             }
             .padding()
-            .onAppear {
-                // If not focusing, ensure displayed time reflects the chosen duration
-                if !sessionTimer.isFocusing {
-                    sessionTimer.timeRemaining = selectedDuration * 60
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .ignoresSafeArea(edges: .bottom)
+        .background(Gradient(colors: gradientColors))
+
+        // ✅ Restore timer when reopening app (lock screen is OK)
+        .onAppear {
+            // If not currently focusing, show full duration by default
+            if !sessionTimer.isFocusing {
+                sessionTimer.timeRemaining = selectedDuration * 60
+            }
+
+            // If snapshot says we were focusing before, restore the timer
+            if let snap = loadCurrentSessionSnapshot(), snap.isActive {
+                sessionTimer.restoreFromEndDate(snap.endDate)
+            }
+        }
+
+        // ✅ When the session ends: mark scheduled session complete/failed + snapshot handling
+        .onChange(of: sessionTimer.sessionComplete) { _, isComplete in
+            if !isComplete { return }
+
+            // update scheduled session status
+            if let sched = scheduledSession {
+                var sessions = loadScheduledSessions()
+                if let idx = sessions.firstIndex(where: { $0.id == sched.id }) {
+                    sessions[idx].status = sessionTimer.rewardEarned ? .completed : .failed
+                    saveScheduledSessions(sessions)
                 }
             }
-            // Auto-return home when the session finishes or ends early
-            .onChange(of: sessionTimer.sessionComplete) { _, isComplete in
-                if isComplete {
-                    // If this view was launched for a specific scheduled session, mark its result
-                    if let sched = scheduledSession {
-                        var sessions = loadScheduledSessions()
-                        if let idx = sessions.firstIndex(where: { $0.id == sched.id }) {
-                            if sessionTimer.rewardEarned {
-                                sessions[idx].status = .completed
-                            } else {
-                                sessions[idx].status = .failed
-                            }
-                            saveScheduledSessions(sessions)
-                        }
-                    }
-                    // removed dismiss() as requested
-                }
+
+            // snapshot rules:
+            // - success -> clear snapshot
+            // - failure -> keep snapshot (so failure state can be shown)
+            if sessionTimer.rewardEarned {
+                saveCurrentSessionSnapshot(nil)
             }
-            // Keep accuracy across scene changes by recomputing from the current time
-            .onChange(of: scenePhase) { _, newPhase in
-                switch newPhase {
-                case .active:
-                    sessionTimer.resyncIfNeeded()
-                    // Reconcile persisted snapshot on becoming active (may auto-complete if finished while away)
-                    var persisted = loadCurrentSessionSnapshot()
-                    handleScenePhaseForSnapshot(
-                        snapshot: &persisted,
-                        onActive: {
-                            // No-op: timer is already resynced above
-                        },
-                        onSuccess: {
-                            // Session finished while away; ensure timer reflects completion
-                            if sessionTimer.isFocusing {
-                                sessionTimer.completeSession()
-                            }
-                        },
-                        onFailure: {
-                            // Not used here; failure handled on background
-                        },
-                        now: Date()
-                    )
-                    print("✅ App became active again")
-                case .inactive:
-                    print("⚠️ App became inactive (e.g. Control Center opened)")
-                case .background:
-                    // Persist immediate failure when moving to background during an active session
-                    var persisted = loadCurrentSessionSnapshot()
-                    markBackgroundFailureForSnapshot(
-                        snapshot: &persisted,
-                        onFailure: {
-                            // Timer will be ended below
+        }
+
+        // ✅ Background = failure, Lock screen = allowed
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+
+            case .active:
+                // resync timer in case time passed
+                sessionTimer.resyncIfNeeded()
+
+                // handle snapshot when returning active
+                var snap = loadCurrentSessionSnapshot()
+                handleScenePhaseForSnapshot(
+                    snapshot: &snap,
+                    onActive: {
+                        // no-op
+                    },
+                    onSuccess: {
+                        // if it ended while away, complete
+                        if sessionTimer.isFocusing {
+                            sessionTimer.completeSession()
                         }
-                    )
-                    print("🚫 App moved to background (user left the app!)")
-                    if sessionTimer.isFocusing {
-                        sessionTimer.endEarly()
-                    }
-                    // If associated with a scheduled session, mark it failed on background
+                    },
+                    onFailure: {
+                        // failure is handled on background below
+                    },
+                    now: Date()
+                )
+
+            case .inactive:
+                // lock screen / control center happens here (allowed)
+                break
+
+            case .background:
+                // ✅ if focusing and user leaves app -> immediate failure
+                if sessionTimer.isFocusing {
+                    var snap = loadCurrentSessionSnapshot()
+                    markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
+                    sessionTimer.endEarly()
+
+                    // mark scheduled as failed
                     if let sched = scheduledSession {
                         var sessions = loadScheduledSessions()
                         if let idx = sessions.firstIndex(where: { $0.id == sched.id }) {
@@ -160,26 +183,22 @@ struct FocusSessionView: View {
                             saveScheduledSessions(sessions)
                         }
                     }
-                @unknown default:
-                    print("Unknown scene phase")
                 }
+
+            @unknown default:
+                break
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .ignoresSafeArea(edges: .bottom)
-        .background(Gradient(colors: gradientColors))
     }
 
     func formatTime(_ seconds: Int) -> String {
         let hrs = seconds / 3600
         let mins = (seconds % 3600) / 60
         let secs = seconds % 60
-        
+
         if hrs > 0 {
-            // Show hours if needed (e.g. 1:05:09)
             return String(format: "%d:%02d:%02d", hrs, mins, secs)
         } else {
-            // Otherwise, just show minutes and seconds (e.g. 25:43)
             return String(format: "%02d:%02d", mins, secs)
         }
     }
@@ -187,6 +206,5 @@ struct FocusSessionView: View {
 
 #Preview {
     FocusSessionView()
-        .environmentObject(FocusSessionTimer()) // Preview support
+        .environmentObject(FocusSessionTimer())
 }
-
