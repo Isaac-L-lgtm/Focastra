@@ -76,19 +76,43 @@ struct SelectTimesView: View {
                 Spacer()
                 
                 Button(action: {
-                    // Save the chosen start time back to Home
+                    // 1) Save chosen time + duration back to Home (for UI only)
                     selectedStartTime = selectedTime
-
-                    // Save the chosen duration (label -> minutes)
                     let minutes = durationOptions.first(where: { $0.label == durationTime })?.minutes ?? 30
                     selectedDurationMinutes = minutes
-
-                    // Explicitly deactivate the SelectDatesView link so the stack collapses back to Home.
+                
+                    // 2) Build and save real ScheduledSession objects (this is the "source of truth")
+                    var sessions = loadScheduledSessions()
+                    let cal = Calendar.current
+                
+                    // Take the hour/minute from the chosen time
+                    let timeComps = cal.dateComponents([.hour, .minute], from: selectedTime)
+                
+                    for day in selectedDates {
+                        // day is DateComponents from MultiDatePicker
+                        var comps = day
+                        comps.hour = timeComps.hour
+                        comps.minute = timeComps.minute
+                
+                        if let sessionDate = cal.date(from: comps) {
+                            // Allow multiple dates for the same time
+                            let newSession = ScheduledSession(scheduledDate: sessionDate,
+                                                             durationMinutes: minutes,
+                                                             status: .scheduled)
+                            sessions.append(newSession)
+                        }
+                    }
+                
+                    // Save + clean missed ones immediately
+                    sessions.sort { $0.scheduledDate < $1.scheduledDate }
+                    removeMissedSessionsForToday(&sessions, now: Date())
+                    saveScheduledSessions(sessions)
+                
+                    // 3) Collapse nav back to Home
                     goToSelectDatesActive = false
-
-                    // Also dismiss this view (if it was pushed directly from Home via the "Now" path).
                     dismiss()
                 }) {
+
                     Text("Done")
                         .font(.custom("Impact", size: 25))
                         .padding(.vertical, 10)
