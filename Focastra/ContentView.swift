@@ -3,95 +3,100 @@
 //  Focastra
 //
 //  Created by Isaac Law on 2025-10-20.
-// FINAL
+//  FINAL
+//
 
 import SwiftUI
 import Combine
 
-//gradient colours for background.
+// gradient colours for background.
 let gradientColors: [Color] = [
     .gradientTop,
     .gradientMiddle,
     .gradientMiddle,
     .gradientBottom
 ]
-//currentPage: 0 and 1 - loading screen
 
+// currentPage: 0 and 1 - loading screen
 struct ContentView: View {
+
+    @EnvironmentObject private var sessionTimer: FocusSessionTimer
+
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    //every 3 seconds, the main run loop auto-advance the loading pages
+    // every 3 seconds, auto-advance loading pages
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
-    
 
     var body: some View {
         ZStack {
-            // Gradient background (always visible behind both loading and main content)
+
             LinearGradient(
                 gradient: Gradient(colors: gradientColors),
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
-            
+
+            // Loading
             if showLoading {
                 TabView(selection: $currentPage) {
-                    // Page 0: Welcome
-                    WelcomePage()
-                        .tag(0)
-                    // Page 1: Features
-                    FeaturesPage()
-                        .tag(1)
+                    WelcomePage().tag(0)
+                    FeaturesPage().tag(1)
                 }
                 .background(Gradient(colors: gradientColors))
                 .tabViewStyle(PageTabViewStyle())
                 .onReceive(timer) { _ in
                     withAnimation {
-                        // Cycle between 0 and 1 (two pages) while loading
                         currentPage = (currentPage + 1) % 2
                     }
                 }
-                // Animate the loading view when it appears/disappears
-                .transition(.opacity .combined(with: .scale))
+                .transition(.opacity.combined(with: .scale))
             }
 
-            // MARK: Home Page (after loading)
-            // Main part of app (Home page)
+            // Main App
             if !showLoading {
                 TabView(selection: $currentPage) {
                     HomePage(tabSelection: $currentPage)
-                        .tabItem {
-                            Label("Home", systemImage: "star.fill")
-                        }
+                        .tabItem { Label("Home", systemImage: "star.fill") }
                         .tag(0)
-                    
+
                     CustomizePage()
-                        .tabItem {
-                            Label("Customize", systemImage: "paintbrush.pointed.fill")
-                        }
+                        .tabItem { Label("Customize", systemImage: "paintbrush.pointed.fill") }
                         .tag(1)
-                    
+
                     StatsPage()
-                        .tabItem {
-                            Label("Stats", systemImage: "chart.bar.xaxis")
-                        }
+                        .tabItem { Label("Stats", systemImage: "chart.bar.xaxis") }
                         .tag(2)
                 }
-                .transition(.opacity) // fade in
+                .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 1.0), value: showLoading)
         .onAppear {
-            // CHANGE 1 TO 6
+            // loading ends after 1 sec
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                withAnimation {
-                    showLoading = false
-                }
-                
+                withAnimation { showLoading = false }
+
+                // ✅ clean missed sessions
                 var sessions = loadScheduledSessions()
                 removeMissedSessionsForToday(&sessions, now: Date())
                 saveScheduledSessions(sessions)
+
+                // ✅ IMPORTANT RULE: if app was CLOSED during an active focus session -> FAIL it
+                // (This runs when the app launches again)
+                if var snap = loadCurrentSessionSnapshot(), snap.isActive {
+                    // Mark snapshot as failed (because app was reopened -> means it got closed)
+                    snap.isActive = false
+                    snap.didSucceed = false
+                    snap.didFail = true
+                    saveCurrentSessionSnapshot(snap)
+
+                    // Also stop any timer state just in case
+                    if sessionTimer.isFocusing {
+                        sessionTimer.endEarly()
+                    }
+                }
             }
         }
     }
@@ -99,7 +104,6 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        // Provide environment objects so previews match app runtime
         .environmentObject(FocusSessionPlanner())
         .environmentObject(FocusSessionTimer())
 }
