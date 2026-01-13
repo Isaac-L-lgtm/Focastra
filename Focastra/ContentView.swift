@@ -27,10 +27,10 @@ struct ContentView: View {
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    // ✅ Detect when phone is locked (so lock screen does NOT count as failure)
+    // ✅ Lock detection so lock screen DOES NOT count as leaving app
     @State private var isDeviceLocked = false
 
-    // ✅ If app was force-closed during a session, we open FocusSessionView to show failure
+    // ✅ If app was force-closed during a session, show FocusSessionView to display failure
     @State private var showFailureScreen = false
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
@@ -85,30 +85,33 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 1.0), value: showLoading)
 
         // ✅ Detect lock/unlock
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.protectedDataWillBecomeUnavailableNotification
+        )) { _ in
             isDeviceLocked = true
         }
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+        .onReceive(NotificationCenter.default.publisher(
+            for: UIApplication.protectedDataDidBecomeAvailableNotification
+        )) { _ in
             isDeviceLocked = false
         }
 
         // ✅ GLOBAL RULE:
-        // If user leaves app (switch apps) while focusing -> fail (works from ANY screen)
+        // Leaving app (switch apps) fails from ANY screen, but locking phone does NOT.
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
-                // If time passed while away, recompute remaining
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
-                // Lock screen / control center often triggers inactive first (allowed)
+                // Lock screen often triggers inactive first — allowed
                 break
 
             case .background:
-                // ✅ If phone is locked, DO NOT fail
+                // ✅ Lock screen should NOT fail
                 if isDeviceLocked { break }
 
-                // ✅ If user leaves app while focusing -> fail
+                // ✅ Switching apps should fail (from any screen)
                 if sessionTimer.isFocusing {
                     failActiveSessionBecauseUserLeftApp()
                 }
@@ -118,34 +121,30 @@ struct ContentView: View {
             }
         }
 
-        // ✅ On app launch: remove missed sessions, and detect force-close failure
+        // ✅ On launch: clean missed sessions + detect force-close failure
         .onAppear {
-            // loading ends after 1 sec
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 withAnimation { showLoading = false }
 
-                // clean missed sessions
+                // Clean missed sessions
                 var sessions = loadScheduledSessions()
                 removeMissedSessionsForToday(&sessions, now: Date())
                 saveScheduledSessions(sessions)
 
-                // ✅ If the app was CLOSED during an active focus session -> FAIL it on next launch
+                // If the app was CLOSED during an active focus session -> FAIL on next launch
                 if var snap = loadCurrentSessionSnapshot(), snap.isActive {
-
-                    // Mark snapshot as failed
                     snap.isActive = false
                     snap.didSucceed = false
                     snap.didFail = true
                     saveCurrentSessionSnapshot(snap)
 
-                    // Mark the scheduled session as failed (if linked)
+                    // Also mark scheduled session as failed and show failure screen
                     if let id = snap.scheduledSessionID {
                         var sessions2 = loadScheduledSessions()
                         if let idx = sessions2.firstIndex(where: { $0.id == id }) {
                             sessions2[idx].status = .failed
                             saveScheduledSessions(sessions2)
 
-                            // ✅ Open FocusSessionView to SHOW failure
                             failureSession = sessions2[idx]
                             failureDurationMinutes = sessions2[idx].durationMinutes
                             showFailureScreen = true
@@ -160,7 +159,7 @@ struct ContentView: View {
             }
         }
 
-        // ✅ Show failure screen after relaunch
+        // ✅ After relaunch failure, open FocusSessionView to show "Failed"
         .fullScreenCover(isPresented: $showFailureScreen) {
             FocusSessionView(durationMinutes: failureDurationMinutes, scheduled: failureSession)
                 .environmentObject(sessionTimer)
@@ -169,14 +168,14 @@ struct ContentView: View {
 
     // MARK: - Helper
     private func failActiveSessionBecauseUserLeftApp() {
-        // mark snapshot failure
+        // Mark snapshot failure
         var snap = loadCurrentSessionSnapshot()
         markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
 
-        // stop timer UI
+        // Stop timer
         sessionTimer.endEarly()
 
-        // mark scheduled session failed (if linked)
+        // Mark scheduled session failed (if linked)
         if let id = snap?.scheduledSessionID {
             var sessions = loadScheduledSessions()
             if let idx = sessions.firstIndex(where: { $0.id == id }) {
