@@ -83,16 +83,26 @@ struct ContentView: View {
                 removeMissedSessionsForToday(&sessions, now: Date())
                 saveScheduledSessions(sessions)
 
-                // ✅ IMPORTANT RULE: if app was CLOSED during an active focus session -> FAIL it
-                // (This runs when the app launches again)
+                // ✅ IMPORTANT RULE:
+                // If the app was CLOSED during an active focus session -> FAIL it on next launch
                 if var snap = loadCurrentSessionSnapshot(), snap.isActive {
-                    // Mark snapshot as failed (because app was reopened -> means it got closed)
+
+                    // Mark snapshot as failed
                     snap.isActive = false
                     snap.didSucceed = false
                     snap.didFail = true
                     saveCurrentSessionSnapshot(snap)
 
-                    // Also stop any timer state just in case
+                    // ✅ ALSO mark the scheduled session as failed (if we know which one)
+                    if let id = snap.scheduledSessionID {
+                        var sessions = loadScheduledSessions()
+                        if let idx = sessions.firstIndex(where: { $0.id == id }) {
+                            sessions[idx].status = .failed
+                            saveScheduledSessions(sessions)
+                        }
+                    }
+
+                    // Stop timer state just in case
                     if sessionTimer.isFocusing {
                         sessionTimer.endEarly()
                     }
