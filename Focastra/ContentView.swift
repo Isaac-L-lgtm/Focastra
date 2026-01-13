@@ -27,10 +27,10 @@ struct ContentView: View {
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    // ✅ Lock detection
+    // ✅ Detect when phone is locked (so lock screen does NOT count as failure)
     @State private var isDeviceLocked = false
 
-    // ✅ If we need to show failure screen after relaunch
+    // ✅ If app was force-closed during a session, we open FocusSessionView to show failure
     @State private var showFailureScreen = false
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
@@ -92,21 +92,23 @@ struct ContentView: View {
             isDeviceLocked = false
         }
 
-        // ✅ GLOBAL RULE: switching apps fails NO MATTER what screen you're on
+        // ✅ GLOBAL RULE:
+        // If user leaves app (switch apps) while focusing -> fail (works from ANY screen)
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
+                // If time passed while away, recompute remaining
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
-                // lock screen / control center often triggers inactive (allowed)
+                // Lock screen / control center often triggers inactive first (allowed)
                 break
 
             case .background:
                 // ✅ If phone is locked, DO NOT fail
                 if isDeviceLocked { break }
 
-                // ✅ If user left the app while focusing -> fail
+                // ✅ If user leaves app while focusing -> fail
                 if sessionTimer.isFocusing {
                     failActiveSessionBecauseUserLeftApp()
                 }
@@ -116,17 +118,18 @@ struct ContentView: View {
             }
         }
 
+        // ✅ On app launch: remove missed sessions, and detect force-close failure
         .onAppear {
             // loading ends after 1 sec
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 withAnimation { showLoading = false }
 
-                // ✅ clean missed sessions
+                // clean missed sessions
                 var sessions = loadScheduledSessions()
                 removeMissedSessionsForToday(&sessions, now: Date())
                 saveScheduledSessions(sessions)
 
-                // ✅ If app was CLOSED during an active focus session -> FAIL it on next launch
+                // ✅ If the app was CLOSED during an active focus session -> FAIL it on next launch
                 if var snap = loadCurrentSessionSnapshot(), snap.isActive {
 
                     // Mark snapshot as failed
@@ -137,14 +140,14 @@ struct ContentView: View {
 
                     // Mark the scheduled session as failed (if linked)
                     if let id = snap.scheduledSessionID {
-                        var sessions = loadScheduledSessions()
-                        if let idx = sessions.firstIndex(where: { $0.id == id }) {
-                            sessions[idx].status = .failed
-                            saveScheduledSessions(sessions)
+                        var sessions2 = loadScheduledSessions()
+                        if let idx = sessions2.firstIndex(where: { $0.id == id }) {
+                            sessions2[idx].status = .failed
+                            saveScheduledSessions(sessions2)
 
-                            // ✅ Auto-open FocusSessionView to show failure
-                            failureSession = sessions[idx]
-                            failureDurationMinutes = sessions[idx].durationMinutes
+                            // ✅ Open FocusSessionView to SHOW failure
+                            failureSession = sessions2[idx]
+                            failureDurationMinutes = sessions2[idx].durationMinutes
                             showFailureScreen = true
                         }
                     }
@@ -164,6 +167,7 @@ struct ContentView: View {
         }
     }
 
+    // MARK: - Helper
     private func failActiveSessionBecauseUserLeftApp() {
         // mark snapshot failure
         var snap = loadCurrentSessionSnapshot()
