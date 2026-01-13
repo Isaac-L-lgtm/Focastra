@@ -9,16 +9,24 @@ import SwiftUI
 
 struct FocusSessionView: View {
 
-    @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var sessionTimer: FocusSessionTimer
 
-    // configuration passed in
     @State private var selectedDuration: Int
     @State private var scheduledSession: ScheduledSession? = nil
 
     init(durationMinutes: Int = 30, scheduled: ScheduledSession? = nil) {
         _selectedDuration = State(initialValue: durationMinutes)
         _scheduledSession = State(initialValue: scheduled)
+    }
+
+    // ✅ Hide start if this session is already completed/failed OR session already ended
+    private var shouldShowStart: Bool {
+        if sessionTimer.isFocusing { return false }
+        if sessionTimer.sessionComplete { return false }
+        if let s = scheduledSession {
+            return s.status == .scheduled
+        }
+        return true
     }
 
     var body: some View {
@@ -30,72 +38,58 @@ struct FocusSessionView: View {
                     .padding(.top, 100)
                     .padding(.bottom, 100)
 
-                // Timer display
                 Text(formatTime(sessionTimer.timeRemaining))
                     .font(.custom("Impact", size: 60))
                     .fontWeight(.bold)
                     .padding(.bottom, 50)
 
-                // Start button (only starts when rules are met)
-                Button {
-                    // already focusing? do nothing
-                    if sessionTimer.isFocusing { return }
+                // ✅ Start button (hidden when failed/completed)
+                if shouldShowStart {
+                    Button {
+                        if sessionTimer.isFocusing { return }
 
-                    // cannot restart completed/failed session
-                    if let sched = scheduledSession, (sched.status == .completed || sched.status == .failed) {
-                        return
-                    }
-
-                    // ✅ Start allowed only if:
-                    // - date is today
-                    // - time is coming up (now must be <= scheduled time)
-                    if let sched = scheduledSession {
-                        let now = Date()
-                        let cal = Calendar.current
-
-                        if !cal.isDate(sched.scheduledDate, inSameDayAs: now) {
+                        // cannot restart completed/failed session
+                        if let sched = scheduledSession, (sched.status == .completed || sched.status == .failed) {
                             return
                         }
 
-                        if now > sched.scheduledDate {
-                            // missed it (HomePage will remove it anyway)
-                            return
+                        // Start allowed only if today and time hasn't passed
+                        if let sched = scheduledSession {
+                            let now = Date()
+                            let cal = Calendar.current
+
+                            if !cal.isDate(sched.scheduledDate, inSameDayAs: now) { return }
+                            if now > sched.scheduledDate { return }
                         }
+
+                        sessionTimer.start(durationMinutes: selectedDuration)
+
+                        let snapshot = makeCurrentSessionSnapshot(
+                            durationMinutes: selectedDuration,
+                            start: Date(),
+                            scheduledSessionID: scheduledSession?.id
+                        )
+                        saveCurrentSessionSnapshot(snapshot)
+
+                    } label: {
+                        Text("Start Focus Session")
+                            .font(.custom("Impact", size: 40))
+                            .padding()
+                            .background(.focastra, in: RoundedRectangle(cornerRadius: 12))
+                            .foregroundStyle(.white)
                     }
-
-                    // Start timer
-                    sessionTimer.start(durationMinutes: selectedDuration)
-
-                    // ✅ Save snapshot so we can restore if app restarts
-                    let snapshot = makeCurrentSessionSnapshot(
-                        durationMinutes: selectedDuration,
-                        start: Date(),
-                        scheduledSessionID: scheduledSession?.id
-                    )
-                    saveCurrentSessionSnapshot(snapshot)
-
-                } label: {
-                    Text(sessionTimer.isFocusing ? "Focusing..." : "Start Focus Session")
-                        .font(.custom("Impact", size: 40))
-                        .padding()
-                        .background(.focastra, in: RoundedRectangle(cornerRadius: 12))
-                        .foregroundStyle(.white)
-                        .opacity(sessionTimer.isFocusing ? 0.6 : 1.0)
                 }
-                .disabled(sessionTimer.isFocusing || (scheduledSession?.status == .completed) || (scheduledSession?.status == .failed))
 
-                // encouragement
                 if sessionTimer.isFocusing {
                     Text("Stay focused for \(selectedDuration) minutes!")
                         .font(.headline)
                         .padding(.top, 20)
                 }
 
-                // complete message
                 if sessionTimer.sessionComplete {
                     Text(sessionTimer.rewardEarned
                          ? "✅ Session Complete! Reward Earned!"
-                         : "⛔ Session Failed / Ended Early.\nNo reward.")
+                         : "⛔ Session Failed.\nNo reward.")
                         .font(.headline)
                         .padding(.top, 20)
                         .multilineTextAlignment(.center)
@@ -109,86 +103,55 @@ struct FocusSessionView: View {
         .ignoresSafeArea(edges: .bottom)
         .background(Gradient(colors: gradientColors))
 
-        // ✅ Restore timer when reopening app (lock screen is OK)
         .onAppear {
-            // If not currently focusing, show full duration by default
-            if !sessionTimer.isFocusing {
+            // Show full duration if not focusing yet
+            if !sessionTimer.isFocusing && !sessionTimer.sessionComplete {
                 sessionTimer.timeRemaining = selectedDuration * 60
             }
 
-            // If snapshot says we were focusing before, restore the timer
-            if let snap = loadCurrentSessionSnapshot(), snap.isActive {
-                sessionTimer.restoreFromEndDate(snap.endDate)
+            // ✅ Read snapshot state to restore OR show fail after relaunch
+            if let snap = loadCurrentSessionSnapshot() {
+                if snap.isActive {
+                    sessionTimer.restoreFromEndDate(snap.endDate)
+                } else if snap.didFail {
+                    sessionTimer.isFocusing = false
+                    sessionTimer.sessionComplete = true
+                    sessionTimer.rewardEarned = false
+                    sessionTimer.timeRemaining = 0
+                } else if snap.didSucceed {
+                    sessionTimer.isFocusing = false
+                    sessionTimer.sessionComplete = true
+                    sessionTimer.rewardEarned = true
+                    sessionTimer.timeRemaining = 0
+                }
+            }
+
+            // ✅ Reload the latest scheduled session status from storage (so Start hides after fail)
+            if let s = scheduledSession {
+                let sessions = loadScheduledSessions()
+                if let newest = sessions.first(where: { $0.id == s.id }) {
+                    scheduledSession = newest
+                    selectedDuration = newest.durationMinutes
+                }
             }
         }
 
-        // ✅ When the session ends: mark scheduled session complete/failed + snapshot handling
+        // When session ends: mark scheduled session completed/failed
         .onChange(of: sessionTimer.sessionComplete) { _, isComplete in
             if !isComplete { return }
 
-            // update scheduled session status
             if let sched = scheduledSession {
                 var sessions = loadScheduledSessions()
                 if let idx = sessions.firstIndex(where: { $0.id == sched.id }) {
                     sessions[idx].status = sessionTimer.rewardEarned ? .completed : .failed
                     saveScheduledSessions(sessions)
+                    scheduledSession = sessions[idx]
                 }
             }
 
-            // snapshot rules:
-            // - success -> clear snapshot
-            // - failure -> keep snapshot
+            // success -> clear snapshot; failure -> keep snapshot (so we can show fail)
             if sessionTimer.rewardEarned {
                 saveCurrentSessionSnapshot(nil)
-            }
-        }
-
-        // ✅ Background = failure, Lock screen = allowed
-        .onChange(of: scenePhase) { _, newPhase in
-            switch newPhase {
-
-            case .active:
-                // resync timer in case time passed
-                sessionTimer.resyncIfNeeded()
-
-                // handle snapshot when returning active
-                var snap = loadCurrentSessionSnapshot()
-                handleScenePhaseForSnapshot(
-                    snapshot: &snap,
-                    onActive: { },
-                    onSuccess: {
-                        // if it ended while away, complete
-                        if sessionTimer.isFocusing {
-                            sessionTimer.completeSession()
-                        }
-                    },
-                    onFailure: { },
-                    now: Date()
-                )
-
-            case .inactive:
-                // lock screen / control center happens here (allowed)
-                break
-
-            case .background:
-                // ✅ if focusing and user leaves app -> immediate failure
-                if sessionTimer.isFocusing {
-                    var snap = loadCurrentSessionSnapshot()
-                    markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
-                    sessionTimer.endEarly()
-
-                    // mark scheduled as failed
-                    if let sched = scheduledSession {
-                        var sessions = loadScheduledSessions()
-                        if let idx = sessions.firstIndex(where: { $0.id == sched.id }) {
-                            sessions[idx].status = .failed
-                            saveScheduledSessions(sessions)
-                        }
-                    }
-                }
-
-            @unknown default:
-                break
             }
         }
     }
