@@ -56,11 +56,6 @@ struct HomePage: View {
         todaySessionDurationMinutes = nextTodaySession?.durationMinutes
     }
 
-    private var hasValidTodaySession: Bool {
-        // True only if we actually have a pending session for today
-        return nextTodaySession != nil
-    }
-
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottom) {
@@ -133,6 +128,7 @@ struct HomePage: View {
                             goToSelectDates = true
                         }
                     }) {
+
                         // ✅ Button Text (rules)
                         if sessionTimer.isFocusing {
                             HStack {
@@ -254,9 +250,7 @@ struct HomePage: View {
             }
             .ignoresSafeArea(edges: .bottom)
             .background(Gradient(colors: gradientColors))
-            .onAppear {
-                refreshSessions()
-            }
+            .onAppear { refreshSessions() }
             .onReceive(nowTimer) { _ in
                 now = Date()
                 refreshSessions()
