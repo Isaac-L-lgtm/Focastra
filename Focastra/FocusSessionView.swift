@@ -66,8 +66,12 @@ struct FocusSessionView: View {
                     // Start timer
                     sessionTimer.start(durationMinutes: selectedDuration)
 
-                    // Save snapshot so we can restore if app restarts
-                    let snapshot = makeCurrentSessionSnapshot(durationMinutes: selectedDuration, start: Date())
+                    // ✅ Save snapshot so we can restore if app restarts
+                    let snapshot = makeCurrentSessionSnapshot(
+                        durationMinutes: selectedDuration,
+                        start: Date(),
+                        scheduledSessionID: scheduledSession?.id
+                    )
                     saveCurrentSessionSnapshot(snapshot)
 
                 } label: {
@@ -89,7 +93,9 @@ struct FocusSessionView: View {
 
                 // complete message
                 if sessionTimer.sessionComplete {
-                    Text(sessionTimer.rewardEarned ? "✅ Session Complete! Reward Earned!" : "⛔ Session Failed / Ended Early.\nNo reward.")
+                    Text(sessionTimer.rewardEarned
+                         ? "✅ Session Complete! Reward Earned!"
+                         : "⛔ Session Failed / Ended Early.\nNo reward.")
                         .font(.headline)
                         .padding(.top, 20)
                         .multilineTextAlignment(.center)
@@ -131,7 +137,7 @@ struct FocusSessionView: View {
 
             // snapshot rules:
             // - success -> clear snapshot
-            // - failure -> keep snapshot (so failure state can be shown)
+            // - failure -> keep snapshot
             if sessionTimer.rewardEarned {
                 saveCurrentSessionSnapshot(nil)
             }
@@ -149,18 +155,14 @@ struct FocusSessionView: View {
                 var snap = loadCurrentSessionSnapshot()
                 handleScenePhaseForSnapshot(
                     snapshot: &snap,
-                    onActive: {
-                        // no-op
-                    },
+                    onActive: { },
                     onSuccess: {
                         // if it ended while away, complete
                         if sessionTimer.isFocusing {
                             sessionTimer.completeSession()
                         }
                     },
-                    onFailure: {
-                        // failure is handled on background below
-                    },
+                    onFailure: { },
                     now: Date()
                 )
 
