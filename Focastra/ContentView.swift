@@ -27,7 +27,10 @@ struct ContentView: View {
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    // ✅ For showing failure screen after force-close
+    // ✅ More reliable lock signal (notifications can be flaky on Simulator)
+    @State private var protectedDataUnavailable = false
+
+    // ✅ Show failure screen after force-close
     @State private var showFailureScreen = false
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
@@ -54,9 +57,7 @@ struct ContentView: View {
                 .background(Gradient(colors: gradientColors))
                 .tabViewStyle(PageTabViewStyle())
                 .onReceive(timer) { _ in
-                    withAnimation {
-                        currentPage = (currentPage + 1) % 2
-                    }
+                    withAnimation { currentPage = (currentPage + 1) % 2 }
                 }
                 .transition(.opacity.combined(with: .scale))
             }
@@ -81,25 +82,30 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 1.0), value: showLoading)
 
-        // ✅ Global rule: leaving app fails from ANY screen, but locking phone does NOT.
+        // ✅ Lock/unlock notifications (helpful when they work)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
+            protectedDataUnavailable = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            protectedDataUnavailable = false
+        }
+
+        // ✅ GLOBAL RULES:
+        // - switching apps -> fail
+        // - locking phone -> allowed
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
-                // allowed (lock screen often hits inactive first)
+                // Lock screen / control center often triggers inactive first (allowed)
                 break
 
             case .background:
-                // ✅ Reliable lock check:
-                // When phone is locked, protected data becomes unavailable.
-                let locked = (UIApplication.shared.isProtectedDataAvailable == false)
-                if locked { break }
-
-                // ✅ If user actually left the app while focusing -> fail
+                // If we're focusing, decide whether this background should fail.
                 if sessionTimer.isFocusing {
-                    failActiveSessionBecauseUserLeftApp()
+                    decideFailOrAllowAfterBackground()
                 }
 
             @unknown default:
@@ -107,33 +113,57 @@ struct ContentView: View {
             }
         }
 
-        // ✅ On launch: do recovery IMMEDIATELY (before loading delay)
+        // ✅ Run recovery IMMEDIATELY on launch (force-close detection)
         .onAppear {
-            runLaunchRecovery()
+            runLaunchRecoveryNow()
 
-            // loading ends after 1 sec
+            // keep your loading behavior
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 withAnimation { showLoading = false }
             }
         }
 
-        // ✅ Show failure screen after force-close
-        // (This can show even while loading is on screen)
+        // ✅ Show failure screen after relaunch
+        // (this can appear even while loading is shown)
         .fullScreenCover(isPresented: $showFailureScreen) {
             FocusSessionView(durationMinutes: failureDurationMinutes, scheduled: failureSession)
                 .environmentObject(sessionTimer)
         }
     }
 
-    // MARK: - Launch Recovery
+    // MARK: - Background decision
 
-    private func runLaunchRecovery() {
+    private func decideFailOrAllowAfterBackground() {
+        // Wait a bit so lock signals can update
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            // If session already ended, do nothing
+            if !sessionTimer.isFocusing { return }
+
+            // ✅ Strong lock check:
+            // When locked, protected data is unavailable.
+            let locked =
+                protectedDataUnavailable ||
+                (UIApplication.shared.isProtectedDataAvailable == false)
+
+            if locked {
+                // Lock is allowed -> do not fail
+                return
+            }
+
+            // Otherwise treat as switching apps -> fail
+            failActiveSessionBecauseUserLeftApp()
+        }
+    }
+
+    // MARK: - Launch recovery (force-close)
+
+    private func runLaunchRecoveryNow() {
         // Clean missed sessions
         var sessions = loadScheduledSessions()
         removeMissedSessionsForToday(&sessions, now: Date())
         saveScheduledSessions(sessions)
 
-        // If app was CLOSED during an active focus session -> fail it now
+        // If app was closed during an active focus session -> fail it now
         if var snap = loadCurrentSessionSnapshot(), snap.isActive {
 
             // Mark snapshot as failed
@@ -142,7 +172,7 @@ struct ContentView: View {
             snap.didFail = true
             saveCurrentSessionSnapshot(snap)
 
-            // Mark scheduled session as failed and prepare to show FocusSessionView
+            // Mark scheduled session failed if linked
             if let id = snap.scheduledSessionID {
                 var sessions2 = loadScheduledSessions()
                 if let idx = sessions2.firstIndex(where: { $0.id == id }) {
@@ -153,13 +183,13 @@ struct ContentView: View {
                     failureDurationMinutes = sessions2[idx].durationMinutes
                     showFailureScreen = true
                 } else {
-                    // If we couldn't find the session, still show a generic failure screen
+                    // Can't find session, still show failure screen
                     failureSession = nil
                     failureDurationMinutes = 30
                     showFailureScreen = true
                 }
             } else {
-                // No linked scheduled ID -> still show failure screen
+                // No ID, still show failure screen
                 failureSession = nil
                 failureDurationMinutes = 30
                 showFailureScreen = true
@@ -172,7 +202,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Helper
+    // MARK: - Helper fail
 
     private func failActiveSessionBecauseUserLeftApp() {
         // mark snapshot failure
