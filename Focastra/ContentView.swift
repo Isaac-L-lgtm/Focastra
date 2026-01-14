@@ -25,15 +25,13 @@ struct ContentView: View {
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    // Failure screen after force-close
     @State private var showFailureScreen = false
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
 
-    // ✅ Background grace (helps lock/unlock not count as app switch on Simulator)
+    // ✅ Background grace handling
     @State private var pendingBackgroundFail = false
 
-    // Run recovery only once
     @State private var didRunRecovery = false
 
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
@@ -57,7 +55,6 @@ struct ContentView: View {
                 .onReceive(timer) { _ in
                     withAnimation { currentPage = (currentPage + 1) % 2 }
                 }
-                .transition(.opacity.combined(with: .scale))
             } else {
                 TabView(selection: $currentPage) {
                     HomePage(tabSelection: $currentPage)
@@ -72,16 +69,15 @@ struct ContentView: View {
                         .tabItem { Label("Stats", systemImage: "chart.bar.xaxis") }
                         .tag(2)
                 }
-                .transition(.opacity)
             }
         }
         .animation(.easeInOut(duration: 1.0), value: showLoading)
 
-        // ✅ Scene phase rules
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
+
             case .active:
-                // If we come back quickly (lock/unlock), cancel the pending failure
+                // ✅ Coming back cancels any pending failure (lock/unlock should do this)
                 pendingBackgroundFail = false
                 sessionTimer.resyncIfNeeded()
 
@@ -90,12 +86,11 @@ struct ContentView: View {
                 break
 
             case .background:
-                // If focusing, schedule a fail shortly.
-                // If user locks/unlocks quickly, we'll cancel when it goes active.
                 if sessionTimer.isFocusing {
                     pendingBackgroundFail = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                        // If still pending and still focusing, treat as leaving app and fail.
+
+                    // ✅ Longer grace window helps lock on simulator not instantly fail
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
                         if pendingBackgroundFail && sessionTimer.isFocusing {
                             failActiveSessionBecauseUserLeftApp()
                         }
@@ -107,92 +102,78 @@ struct ContentView: View {
             }
         }
 
-        // ✅ Run recovery reliably (after view appears) using .task
         .task {
             if didRunRecovery { return }
             didRunRecovery = true
 
             runLaunchRecoveryNow()
 
-            // loading ends after 1 sec
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             withAnimation { showLoading = false }
         }
 
-        // Show failure screen (force-close)
         .fullScreenCover(isPresented: $showFailureScreen) {
-            FocusSessionView(durationMinutes: failureDurationMinutes, scheduled: failureSession)
-                .environmentObject(sessionTimer)
+            // ✅ IMPORTANT: allowStarting false so user can’t restart from failure screen
+            FocusSessionView(
+                durationMinutes: failureDurationMinutes,
+                scheduled: failureSession,
+                allowStarting: false
+            )
+            .environmentObject(sessionTimer)
         }
     }
 
-    // MARK: - Launch Recovery (force-close)
+    // MARK: - Launch Recovery
 
     private func runLaunchRecoveryNow() {
-        // Clean missed sessions
         var sessions = loadScheduledSessions()
         removeMissedSessionsForToday(&sessions, now: Date())
         saveScheduledSessions(sessions)
 
-        // ✅ Case A: Snapshot says it was active
+        // Snapshot-based recovery
         if var snap = loadCurrentSessionSnapshot(), snap.isActive {
-            markForceCloseFailureFromSnapshot(snap: &snap)
-            return
-        }
+            snap.isActive = false
+            snap.didSucceed = false
+            snap.didFail = true
+            saveCurrentSessionSnapshot(snap)
 
-        // ✅ Case B: Snapshot failed to save, but Timer persistence says it was active
-        if sessionTimer.hadActiveTimerWhenAppClosed() {
-            // Mark snapshot as failed (generic)
-            var generic = loadCurrentSessionSnapshot()
-            markBackgroundFailureForSnapshot(snapshot: &generic, onFailure: {})
-            saveCurrentSessionSnapshot(generic)
+            if let id = snap.scheduledSessionID {
+                var sessions2 = loadScheduledSessions()
+                if let idx = sessions2.firstIndex(where: { $0.id == id }) {
+                    sessions2[idx].status = .failed
+                    saveScheduledSessions(sessions2)
 
-            // We may not know which scheduled session ID, so show generic failure screen
-            failureSession = nil
-            failureDurationMinutes = 30
-            showFailureScreen = true
-
-            // Ensure timer UI stops
-            if sessionTimer.isFocusing {
-                sessionTimer.endEarly()
-            }
-        }
-    }
-
-    private func markForceCloseFailureFromSnapshot(snap: inout PersistedCurrentSession) {
-        // Mark snapshot as failed
-        snap.isActive = false
-        snap.didSucceed = false
-        snap.didFail = true
-        saveCurrentSessionSnapshot(snap)
-
-        // Mark scheduled session failed + open failure screen
-        if let id = snap.scheduledSessionID {
-            var sessions2 = loadScheduledSessions()
-            if let idx = sessions2.firstIndex(where: { $0.id == id }) {
-                sessions2[idx].status = .failed
-                saveScheduledSessions(sessions2)
-
-                failureSession = sessions2[idx]
-                failureDurationMinutes = sessions2[idx].durationMinutes
-                showFailureScreen = true
+                    failureSession = sessions2[idx]
+                    failureDurationMinutes = sessions2[idx].durationMinutes
+                } else {
+                    failureSession = nil
+                    failureDurationMinutes = 30
+                }
             } else {
                 failureSession = nil
                 failureDurationMinutes = 30
-                showFailureScreen = true
             }
-        } else {
-            failureSession = nil
-            failureDurationMinutes = 30
+
+            if sessionTimer.isFocusing {
+                sessionTimer.endEarly()
+            }
+
             showFailureScreen = true
+            return
         }
 
-        if sessionTimer.isFocusing {
-            sessionTimer.endEarly()
+        // Timer-based recovery fallback
+        if sessionTimer.hadActiveTimerWhenAppClosed() {
+            failureSession = nil
+            failureDurationMinutes = 30
+            if sessionTimer.isFocusing {
+                sessionTimer.endEarly()
+            }
+            showFailureScreen = true
         }
     }
 
-    // MARK: - Helper: fail on leaving app
+    // MARK: - Fail helper
 
     private func failActiveSessionBecauseUserLeftApp() {
         var snap = loadCurrentSessionSnapshot()
