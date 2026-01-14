@@ -35,10 +35,10 @@ struct FocusSessionView: View {
     }
 
     private var shouldShowBackToHomeButton: Bool {
-        // If this view is opened as a failure screen (fullScreenCover), show button
+        // If this view is opened as a failure screen, show button
         if !allowStarting { return true }
 
-        // If a normal session finished (success or fail), show button
+        // If a normal session finished, show button
         if sessionTimer.sessionComplete { return true }
 
         return false
