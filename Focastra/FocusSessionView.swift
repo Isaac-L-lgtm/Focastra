@@ -15,7 +15,7 @@ struct FocusSessionView: View {
     @State private var selectedDuration: Int
     @State private var scheduledSession: ScheduledSession? = nil
 
-    // ✅ If false, Start button is never shown (used for failure screen after force-close)
+    // If false, Start button is never shown (used for failure screen after force-close)
     private let allowStarting: Bool
 
     init(durationMinutes: Int = 30,
@@ -34,26 +34,25 @@ struct FocusSessionView: View {
         return true
     }
 
+    // ✅ Show only ONE "Back to Home" button (no duplicates)
+    private var shouldShowBackToHomeButton: Bool {
+        // If this view is opened as a failure screen (fullScreenCover), show button
+        if !allowStarting { return true }
+
+        // If a normal session finished (success or fail), show button
+        if sessionTimer.sessionComplete { return true }
+
+        return false
+    }
+
     var body: some View {
         ZStack {
             VStack(spacing: 16) {
 
-                // ✅ Back button (works when presented as fullScreenCover)
-                HStack {
-                    Button("Back to Home") {
-                        dismiss()
-                    }
-                    .font(.headline)
-                    .padding(.horizontal)
-                    .padding(.top, 10)
-
-                    Spacer()
-                }
-
                 Text("Focus Session")
                     .font(.custom("Impact", size: 60))
                     .fontWeight(.bold)
-                    .padding(.top, 40)
+                    .padding(.top, 90)
                     .padding(.bottom, 40)
 
                 Text(formatTime(sessionTimer.timeRemaining))
@@ -108,13 +107,14 @@ struct FocusSessionView: View {
                         .font(.headline)
                         .padding(.top, 8)
                         .multilineTextAlignment(.center)
+                }
 
-                    // ✅ If session ended, give an obvious way out too
-                    Button("Return to Home") {
+                if shouldShowBackToHomeButton {
+                    Button("Back to Home") {
                         dismiss()
                     }
                     .font(.headline)
-                    .padding(.top, 10)
+                    .padding(.top, 12)
                 }
 
                 Spacer()
@@ -125,7 +125,7 @@ struct FocusSessionView: View {
         .background(Gradient(colors: gradientColors))
 
         .onAppear {
-            // Reload latest scheduled session status from storage
+            // Reload latest scheduled session status
             if let s = scheduledSession {
                 let sessions = loadScheduledSessions()
                 if let newest = sessions.first(where: { $0.id == s.id }) {
@@ -134,7 +134,7 @@ struct FocusSessionView: View {
                 }
             }
 
-            // Default display for scheduled session
+            // Default timer display for scheduled session
             if let s = scheduledSession, s.status == .scheduled {
                 sessionTimer.isFocusing = false
                 sessionTimer.sessionComplete = false
