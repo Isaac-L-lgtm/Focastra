@@ -3,10 +3,13 @@
 //  Focastra
 //
 
+// Main screen: shows welcome, tabs, and handles session recovery/failure.
+
 import SwiftUI
 import Combine
 import UIKit
 
+// App background colors.
 let gradientColors: [Color] = [
     .gradientTop,
     .gradientMiddle,
@@ -14,31 +17,38 @@ let gradientColors: [Color] = [
     .gradientBottom
 ]
 
+// Main SwiftUI view for onboarding and tabs.
 struct ContentView: View {
 
+    // Shared app state
+    // - scenePhase: app state (active/background)
+    // - sessionTimer: timer data for focus sessions
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var sessionTimer: FocusSessionTimer
 
+    // Show welcome pages first.
     @State private var showLoading = true
     @State private var currentPage = 0
 
+    // Show a full-screen fail screen when needed.
     @State private var showFailureScreen = false
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
 
-    // ✅ Track background time (so we can fail when app returns)
+    // Track when app went to background during a focus.
     @State private var backgroundStart: Date? = nil
     @State private var wasFocusingWhenBackgrounded = false
 
-    // ✅ Real device lock signal (works best on iPhone)
+    // True while device is locked.
     @State private var protectedDataUnavailable = false
 
+    // Run recovery only once.
     @State private var didRunRecovery = false
 
+    // Switch welcome pages every few seconds.
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
-    // ✅ Threshold: if you come back BEFORE this, we treat it like lock/unlock.
-    // On Simulator, lock acts weird, so give it more time.
+    // Small grace time: quick return does not fail.
     private var failThresholdSeconds: Double {
         #if targetEnvironment(simulator)
         return 2.5
@@ -48,6 +58,7 @@ struct ContentView: View {
     }
 
     var body: some View {
+        // Background + either welcome or tabs.
         ZStack {
             LinearGradient(
                 gradient: Gradient(colors: gradientColors),
@@ -56,6 +67,7 @@ struct ContentView: View {
             )
             .ignoresSafeArea()
 
+            // Welcome pages on first load.
             if showLoading {
                 TabView(selection: $currentPage) {
                     WelcomePage().tag(0)
@@ -63,10 +75,12 @@ struct ContentView: View {
                 }
                 .background(Gradient(colors: gradientColors))
                 .tabViewStyle(PageTabViewStyle())
+                // Auto-switch pages with animation.
                 .onReceive(timer) { _ in
                     withAnimation { currentPage = (currentPage + 1) % 2 }
                 }
             } else {
+                // Main tabs after welcome.
                 TabView(selection: $currentPage) {
                     HomePage(tabSelection: $currentPage)
                         .tabItem { Label("Home", systemImage: "star.fill") }
@@ -82,9 +96,9 @@ struct ContentView: View {
                 }
             }
         }
-        .animation(.easeInOut(duration: 1.0), value: showLoading)
+        .animation(.easeInOut(duration: 1.0), value: showLoading) // Fade from welcome to tabs.
 
-        // ✅ Lock/unlock notifications (reliable on real iPhone)
+        // Detect device lock/unlock.
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
             protectedDataUnavailable = true
         }
@@ -92,12 +106,12 @@ struct ContentView: View {
             protectedDataUnavailable = false
         }
 
-        // ✅ Scene rules
+        // Handle app state changes and keep timer in sync.
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
 
             case .active:
-                // If we came back and we HAD been focusing when backgrounded, decide fail now.
+                // If user returns after backgrounding, check if we should fail.
                 if wasFocusingWhenBackgrounded {
                     decideFailureOnReturnToActive()
                 }
@@ -106,13 +120,14 @@ struct ContentView: View {
                 backgroundStart = nil
                 wasFocusingWhenBackgrounded = false
 
+                // Update timer if app was paused.
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
                 break
 
             case .background:
-                // record background only if focusing
+                // Track background time only during a focus.
                 if sessionTimer.isFocusing {
                     wasFocusingWhenBackgrounded = true
                     backgroundStart = Date()
@@ -123,9 +138,11 @@ struct ContentView: View {
             }
         }
 
-        // ✅ Launch recovery (force-close)
+        // On launch, recover and show failed session if needed.
         .task {
             if didRunRecovery { return }
+
+            // Do recovery once.
             didRunRecovery = true
 
             runLaunchRecoveryNow()
@@ -134,7 +151,7 @@ struct ContentView: View {
             withAnimation { showLoading = false }
         }
 
-        // ✅ Failure screen after force-close
+        // Show failure screen when needed.
         .fullScreenCover(isPresented: $showFailureScreen) {
             FocusSessionView(
                 durationMinutes: failureDurationMinutes,
@@ -147,40 +164,44 @@ struct ContentView: View {
 
     // MARK: - Decide failure when returning
 
+    // Decide if coming back from background should fail.
     private func decideFailureOnReturnToActive() {
         guard let start = backgroundStart else { return }
         let away = Date().timeIntervalSince(start)
 
-        // If away time is tiny, treat like lock/unlock → allowed
+        // Quick return: treat as lock/unlock (no fail).
         if away < failThresholdSeconds {
             return
         }
 
-        // Real device: if it was a lock, allow it
+        // On real devices, allow screen lock.
         #if !targetEnvironment(simulator)
         let locked = protectedDataUnavailable || (UIApplication.shared.isProtectedDataAvailable == false)
         if locked { return }
         #endif
 
-        // Otherwise: treat as switching apps → FAIL
+        // Otherwise, user probably switched apps: fail.
         failActiveSessionBecauseUserLeftApp()
     }
 
     // MARK: - Launch recovery (force-close)
 
+    // Recover after force-close/crash and prepare fail UI.
     private func runLaunchRecoveryNow() {
-        // Clean missed sessions
+        // Remove today’s sessions that already passed.
         var sessions = loadScheduledSessions()
         removeMissedSessionsForToday(&sessions, now: Date())
         saveScheduledSessions(sessions)
 
-        // Snapshot-based recovery
+        // Main path: recover from saved in-progress session.
         if var snap = loadCurrentSessionSnapshot(), snap.isActive {
+            // Mark saved session as failed.
             snap.isActive = false
             snap.didSucceed = false
             snap.didFail = true
             saveCurrentSessionSnapshot(snap)
 
+            // If linked to a scheduled session, mark it failed.
             if let id = snap.scheduledSessionID {
                 var sessions2 = loadScheduledSessions()
                 if let idx = sessions2.firstIndex(where: { $0.id == id }) {
@@ -198,19 +219,19 @@ struct ContentView: View {
                 failureDurationMinutes = 30
             }
 
-            // ✅ IMPORTANT: show “failed” state in UI
+            // Make the timer show a failed state.
             sessionTimer.forceFailUIState()
 
             showFailureScreen = true
             return
         }
 
-        // Timer-based fallback recovery
+        // Fallback: timer was running but no saved session.
         if sessionTimer.hadActiveTimerWhenAppClosed() {
             failureSession = nil
             failureDurationMinutes = 30
 
-            // ✅ IMPORTANT: show “failed” state in UI
+            // Make the timer show a failed state.
             sessionTimer.forceFailUIState()
 
             showFailureScreen = true
@@ -219,12 +240,16 @@ struct ContentView: View {
 
     // MARK: - Fail helper
 
+    // Fail when user leaves the app mid-session.
     private func failActiveSessionBecauseUserLeftApp() {
+        // Save that this session failed.
         var snap = loadCurrentSessionSnapshot()
         markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
 
+        // Stop timer and mark as no reward.
         sessionTimer.endEarly() // sets sessionComplete true + reward false
 
+        // If there’s a scheduled session, mark it failed.
         if let id = snap?.scheduledSessionID {
             var sessions = loadScheduledSessions()
             if let idx = sessions.firstIndex(where: { $0.id == id }) {
@@ -234,3 +259,4 @@ struct ContentView: View {
         }
     }
 }
+
