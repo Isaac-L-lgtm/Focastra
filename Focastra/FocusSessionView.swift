@@ -34,7 +34,6 @@ struct FocusSessionView: View {
         return true
     }
 
-    // ✅ Show only ONE "Back to Home" button (no duplicates)
     private var shouldShowBackToHomeButton: Bool {
         // If this view is opened as a failure screen (fullScreenCover), show button
         if !allowStarting { return true }
@@ -120,8 +119,10 @@ struct FocusSessionView: View {
                     Button("Back to Home") {
                         dismiss()
                     }
-                    .font(.headline)
-                    .padding(.top, 12)
+                    .font(.custom("Impact", size: 40))
+                    .padding()
+                    .background(.focastra, in: RoundedRectangle(cornerRadius: 12))
+                    .foregroundStyle(.white)
                 }
 
                 Spacer()
