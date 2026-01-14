@@ -64,7 +64,7 @@ final class FocusSessionTimer: ObservableObject {
         return savedEndDate.timeIntervalSinceNow > 0
     }
 
-    // ✅ NEW: use this when ContentView detects force-close failure
+    // Happens when ContentView detects force-close failure
     func forceFailUIState() {
         timer?.invalidate()
         timer = nil
