@@ -47,6 +47,13 @@ struct FocusSessionView: View {
 
     var body: some View {
         ZStack {
+            LinearGradient(
+                gradient: Gradient(colors: gradientColors),
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+            
             VStack(spacing: 16) {
 
                 Text("Focus Session")
@@ -121,8 +128,7 @@ struct FocusSessionView: View {
             }
             .padding()
         }
-        .ignoresSafeArea(edges: .bottom)
-        .background(Gradient(colors: gradientColors))
+
 
         .onAppear {
             // Reload latest scheduled session status
