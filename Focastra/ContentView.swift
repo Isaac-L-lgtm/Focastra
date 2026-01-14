@@ -40,7 +40,7 @@ struct ContentView: View {
     @State private var backgroundStart: Date? = nil
     @State private var wasFocusingWhenBackgrounded = false
 
-    // True while device is locked
+    // True when device is locked
     @State private var protectedDataUnavailable = false
 
     // Run recovery only once
@@ -49,7 +49,7 @@ struct ContentView: View {
     // Switch welcome pages every few seconds
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
-    // Small grace time: quick return does not fail.
+    // For simulator
     private var failThresholdSeconds: Double {
         #if targetEnvironment(simulator)
         return 2.5
@@ -68,7 +68,7 @@ struct ContentView: View {
             )
             .ignoresSafeArea()
 
-            // Welcome pages on first load.
+            // Welcome pages on first load
             if showLoading {
                 TabView(selection: $currentPage) {
                     WelcomePage().tag(0)
@@ -81,7 +81,7 @@ struct ContentView: View {
                     withAnimation { currentPage = (currentPage + 1) % 2 }
                 }
             } else {
-                // Main tabs after welcome.
+                // Main tabs after welcome
                 TabView(selection: $currentPage) {
                     HomePage(tabSelection: $currentPage)
                         .tabItem { Label("Home", systemImage: "star.fill") }
@@ -99,7 +99,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 1.0), value: showLoading) // Fade from welcome to tabs.
 
-        // Detect device lock/unlock.
+        // Detect device lock/unlock
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
             protectedDataUnavailable = true
         }
@@ -112,7 +112,7 @@ struct ContentView: View {
             switch newPhase {
 
             case .active:
-                // If user returns after backgrounding, check if we should fail.
+                // If user returns after backgrounding, check if fail
                 if wasFocusingWhenBackgrounded {
                     decideFailureOnReturnToActive()
                 }
@@ -139,7 +139,7 @@ struct ContentView: View {
             }
         }
 
-        // On launch, recover and show failed session if needed.
+        // On launch, recover and show failed session if needed
         .task {
             if didRunRecovery { return }
 
@@ -152,7 +152,7 @@ struct ContentView: View {
             withAnimation { showLoading = false }
         }
 
-        // Show failure screen when needed.
+        // Show failure screen when needed
         .fullScreenCover(isPresented: $showFailureScreen) {
             FocusSessionView(
                 durationMinutes: failureDurationMinutes,
@@ -170,31 +170,31 @@ struct ContentView: View {
         guard let start = backgroundStart else { return }
         let away = Date().timeIntervalSince(start)
 
-        // Quick return: treat as lock/unlock (no fail)
+        // No fail
         if away < failThresholdSeconds {
             return
         }
 
-        // On real devices, allow screen lock
+        // Allow screen lock
         #if !targetEnvironment(simulator)
         let locked = protectedDataUnavailable || (UIApplication.shared.isProtectedDataAvailable == false)
         if locked { return }
         #endif
 
-        // Otherwise, user probably switched apps: fail.
+        // Otherwise, user probably switched apps: fail
         failActiveSessionBecauseUserLeftApp()
     }
 
     // MARK: - Launch recovery (force-close)
 
-    // Recover after force-close/crash and prepare fail UI.
+    // Recover after force-close/crash and prepare fail UI
     private func runLaunchRecoveryNow() {
-        // Remove today’s sessions that already passed.
+        // Remove today’s sessions that already passed
         var sessions = loadScheduledSessions()
         removeMissedSessionsForToday(&sessions, now: Date())
         saveScheduledSessions(sessions)
 
-        // Main path: recover from saved in-progress session.
+        // Main path: recover from saved in-progress session
         if var snap = loadCurrentSessionSnapshot(), snap.isActive {
             // Mark saved session as failed.
             snap.isActive = false
@@ -202,7 +202,7 @@ struct ContentView: View {
             snap.didFail = true
             saveCurrentSessionSnapshot(snap)
 
-            // If linked to a scheduled session, mark it failed.
+            // If linked to a scheduled session, mark it failed
             if let id = snap.scheduledSessionID {
                 var sessions2 = loadScheduledSessions()
                 if let idx = sessions2.firstIndex(where: { $0.id == id }) {
@@ -220,14 +220,14 @@ struct ContentView: View {
                 failureDurationMinutes = 30
             }
 
-            // Make the timer show a failed state.
+            // Make the timer show a failed state
             sessionTimer.forceFailUIState()
 
             showFailureScreen = true
             return
         }
 
-        // Fallback: timer was running but no saved session.
+        // Fallback: timer was running but no saved session
         if sessionTimer.hadActiveTimerWhenAppClosed() {
             failureSession = nil
             failureDurationMinutes = 30
@@ -241,16 +241,16 @@ struct ContentView: View {
 
     // MARK: - Fail helper
 
-    // Fail when user leaves the app mid-session.
+    // Fail when user leaves the app mid-session
     private func failActiveSessionBecauseUserLeftApp() {
-        // Save that this session failed.
+        // Save that this session failed
         var snap = loadCurrentSessionSnapshot()
         markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
 
-        // Stop timer and mark as no reward.
+        // Stop timer and mark as no reward
         sessionTimer.endEarly() // sets sessionComplete true + reward false
 
-        // If there’s a scheduled session, mark it failed.
+        // If there’s a scheduled session, mark it failed
         if let id = snap?.scheduledSessionID {
             var sessions = loadScheduledSessions()
             if let idx = sessions.firstIndex(where: { $0.id == id }) {
