@@ -9,17 +9,25 @@ import SwiftUI
 
 struct FocusSessionView: View {
 
+    @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var sessionTimer: FocusSessionTimer
 
     @State private var selectedDuration: Int
     @State private var scheduledSession: ScheduledSession? = nil
 
-    init(durationMinutes: Int = 30, scheduled: ScheduledSession? = nil) {
+    // ✅ If false, Start button is never shown (used for failure screen after force-close)
+    private let allowStarting: Bool
+
+    init(durationMinutes: Int = 30,
+         scheduled: ScheduledSession? = nil,
+         allowStarting: Bool = true) {
         _selectedDuration = State(initialValue: durationMinutes)
         _scheduledSession = State(initialValue: scheduled)
+        self.allowStarting = allowStarting
     }
 
     private var canShowStartButton: Bool {
+        if !allowStarting { return false }
         if sessionTimer.isFocusing { return false }
         if sessionTimer.sessionComplete { return false }
         if let s = scheduledSession { return s.status == .scheduled }
@@ -28,17 +36,30 @@ struct FocusSessionView: View {
 
     var body: some View {
         ZStack {
-            VStack {
+            VStack(spacing: 16) {
+
+                // ✅ Back button (works when presented as fullScreenCover)
+                HStack {
+                    Button("Back to Home") {
+                        dismiss()
+                    }
+                    .font(.headline)
+                    .padding(.horizontal)
+                    .padding(.top, 10)
+
+                    Spacer()
+                }
+
                 Text("Focus Session")
                     .font(.custom("Impact", size: 60))
                     .fontWeight(.bold)
-                    .padding(.top, 100)
-                    .padding(.bottom, 100)
+                    .padding(.top, 40)
+                    .padding(.bottom, 40)
 
                 Text(formatTime(sessionTimer.timeRemaining))
                     .font(.custom("Impact", size: 60))
                     .fontWeight(.bold)
-                    .padding(.bottom, 50)
+                    .padding(.bottom, 20)
 
                 if canShowStartButton {
                     Button {
@@ -77,7 +98,7 @@ struct FocusSessionView: View {
                 if sessionTimer.isFocusing {
                     Text("Stay focused for \(selectedDuration) minutes!")
                         .font(.headline)
-                        .padding(.top, 20)
+                        .padding(.top, 8)
                 }
 
                 if sessionTimer.sessionComplete {
@@ -85,19 +106,26 @@ struct FocusSessionView: View {
                          ? "✅ Session Complete! Reward Earned!"
                          : "⛔ Session Failed.\nNo reward.")
                         .font(.headline)
-                        .padding(.top, 20)
+                        .padding(.top, 8)
                         .multilineTextAlignment(.center)
+
+                    // ✅ If session ended, give an obvious way out too
+                    Button("Return to Home") {
+                        dismiss()
+                    }
+                    .font(.headline)
+                    .padding(.top, 10)
                 }
 
                 Spacer()
             }
             .padding()
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .ignoresSafeArea(edges: .bottom)
         .background(Gradient(colors: gradientColors))
 
         .onAppear {
+            // Reload latest scheduled session status from storage
             if let s = scheduledSession {
                 let sessions = loadScheduledSessions()
                 if let newest = sessions.first(where: { $0.id == s.id }) {
@@ -106,6 +134,7 @@ struct FocusSessionView: View {
                 }
             }
 
+            // Default display for scheduled session
             if let s = scheduledSession, s.status == .scheduled {
                 sessionTimer.isFocusing = false
                 sessionTimer.sessionComplete = false
@@ -117,18 +146,22 @@ struct FocusSessionView: View {
                 }
             }
 
+            // Apply snapshot ONLY if it matches this scheduled session
             if let snap = loadCurrentSessionSnapshot() {
-                let matchesThisSession = (snap.scheduledSessionID != nil &&
-                                          snap.scheduledSessionID == scheduledSession?.id)
+                let matchesThisSession =
+                    (snap.scheduledSessionID != nil &&
+                     snap.scheduledSessionID == scheduledSession?.id)
 
                 if snap.isActive && matchesThisSession {
                     sessionTimer.restoreFromEndDate(snap.endDate)
+
                 } else if snap.didFail && matchesThisSession {
                     sessionTimer.isFocusing = false
                     sessionTimer.sessionComplete = true
                     sessionTimer.rewardEarned = false
                     sessionTimer.timeRemaining = 0
                     saveCurrentSessionSnapshot(nil)
+
                 } else if snap.didSucceed && matchesThisSession {
                     sessionTimer.isFocusing = false
                     sessionTimer.sessionComplete = true
