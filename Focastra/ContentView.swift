@@ -27,10 +27,7 @@ struct ContentView: View {
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    // ✅ Lock detection so lock screen DOES NOT count as leaving app
-    @State private var isDeviceLocked = false
-
-    // ✅ If app was force-closed during a session, show FocusSessionView to display failure
+    // ✅ For showing failure screen after force-close
     @State private var showFailureScreen = false
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
@@ -84,34 +81,23 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 1.0), value: showLoading)
 
-        // ✅ Detect lock/unlock
-        .onReceive(NotificationCenter.default.publisher(
-            for: UIApplication.protectedDataWillBecomeUnavailableNotification
-        )) { _ in
-            isDeviceLocked = true
-        }
-        .onReceive(NotificationCenter.default.publisher(
-            for: UIApplication.protectedDataDidBecomeAvailableNotification
-        )) { _ in
-            isDeviceLocked = false
-        }
-
-        // ✅ GLOBAL RULE:
-        // Leaving app (switch apps) fails from ANY screen, but locking phone does NOT.
+        // ✅ Global rule: leaving app fails from ANY screen, but locking phone does NOT.
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
             case .active:
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
-                // Lock screen often triggers inactive first — allowed
+                // allowed (lock screen often hits inactive first)
                 break
 
             case .background:
-                // ✅ Lock screen should NOT fail
-                if isDeviceLocked { break }
+                // ✅ Reliable lock check:
+                // When phone is locked, protected data becomes unavailable.
+                let locked = (UIApplication.shared.isProtectedDataAvailable == false)
+                if locked { break }
 
-                // ✅ Switching apps should fail (from any screen)
+                // ✅ If user actually left the app while focusing -> fail
                 if sessionTimer.isFocusing {
                     failActiveSessionBecauseUserLeftApp()
                 }
@@ -121,61 +107,82 @@ struct ContentView: View {
             }
         }
 
-        // ✅ On launch: clean missed sessions + detect force-close failure
+        // ✅ On launch: do recovery IMMEDIATELY (before loading delay)
         .onAppear {
+            runLaunchRecovery()
+
+            // loading ends after 1 sec
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 withAnimation { showLoading = false }
-
-                // Clean missed sessions
-                var sessions = loadScheduledSessions()
-                removeMissedSessionsForToday(&sessions, now: Date())
-                saveScheduledSessions(sessions)
-
-                // If the app was CLOSED during an active focus session -> FAIL on next launch
-                if var snap = loadCurrentSessionSnapshot(), snap.isActive {
-                    snap.isActive = false
-                    snap.didSucceed = false
-                    snap.didFail = true
-                    saveCurrentSessionSnapshot(snap)
-
-                    // Also mark scheduled session as failed and show failure screen
-                    if let id = snap.scheduledSessionID {
-                        var sessions2 = loadScheduledSessions()
-                        if let idx = sessions2.firstIndex(where: { $0.id == id }) {
-                            sessions2[idx].status = .failed
-                            saveScheduledSessions(sessions2)
-
-                            failureSession = sessions2[idx]
-                            failureDurationMinutes = sessions2[idx].durationMinutes
-                            showFailureScreen = true
-                        }
-                    }
-
-                    // Stop timer state just in case
-                    if sessionTimer.isFocusing {
-                        sessionTimer.endEarly()
-                    }
-                }
             }
         }
 
-        // ✅ After relaunch failure, open FocusSessionView to show "Failed"
+        // ✅ Show failure screen after force-close
+        // (This can show even while loading is on screen)
         .fullScreenCover(isPresented: $showFailureScreen) {
             FocusSessionView(durationMinutes: failureDurationMinutes, scheduled: failureSession)
                 .environmentObject(sessionTimer)
         }
     }
 
+    // MARK: - Launch Recovery
+
+    private func runLaunchRecovery() {
+        // Clean missed sessions
+        var sessions = loadScheduledSessions()
+        removeMissedSessionsForToday(&sessions, now: Date())
+        saveScheduledSessions(sessions)
+
+        // If app was CLOSED during an active focus session -> fail it now
+        if var snap = loadCurrentSessionSnapshot(), snap.isActive {
+
+            // Mark snapshot as failed
+            snap.isActive = false
+            snap.didSucceed = false
+            snap.didFail = true
+            saveCurrentSessionSnapshot(snap)
+
+            // Mark scheduled session as failed and prepare to show FocusSessionView
+            if let id = snap.scheduledSessionID {
+                var sessions2 = loadScheduledSessions()
+                if let idx = sessions2.firstIndex(where: { $0.id == id }) {
+                    sessions2[idx].status = .failed
+                    saveScheduledSessions(sessions2)
+
+                    failureSession = sessions2[idx]
+                    failureDurationMinutes = sessions2[idx].durationMinutes
+                    showFailureScreen = true
+                } else {
+                    // If we couldn't find the session, still show a generic failure screen
+                    failureSession = nil
+                    failureDurationMinutes = 30
+                    showFailureScreen = true
+                }
+            } else {
+                // No linked scheduled ID -> still show failure screen
+                failureSession = nil
+                failureDurationMinutes = 30
+                showFailureScreen = true
+            }
+
+            // Stop timer state just in case
+            if sessionTimer.isFocusing {
+                sessionTimer.endEarly()
+            }
+        }
+    }
+
     // MARK: - Helper
+
     private func failActiveSessionBecauseUserLeftApp() {
-        // Mark snapshot failure
+        // mark snapshot failure
         var snap = loadCurrentSessionSnapshot()
         markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
 
-        // Stop timer
+        // stop timer UI
         sessionTimer.endEarly()
 
-        // Mark scheduled session failed (if linked)
+        // mark scheduled session failed (if linked)
         if let id = snap?.scheduledSessionID {
             var sessions = loadScheduledSessions()
             if let idx = sessions.firstIndex(where: { $0.id == id }) {
