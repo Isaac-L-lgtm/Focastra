@@ -3,13 +3,13 @@
 //  Focastra
 //
 
-// Main screen: shows welcome, tabs, and handles session recovery/failure.
+// Main screen: shows welcome, tabs, and handles session recovery/failure
 
 import SwiftUI
 import Combine
 import UIKit
 
-// App background colors.
+// App background colors
 let gradientColors: [Color] = [
     .gradientTop,
     .gradientMiddle,
@@ -17,7 +17,7 @@ let gradientColors: [Color] = [
     .gradientBottom
 ]
 
-// Main SwiftUI view for onboarding and tabs.
+// Main SwiftUI view for onboarding and tabs
 struct ContentView: View {
 
     // Shared app state
@@ -26,26 +26,26 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var sessionTimer: FocusSessionTimer
 
-    // Show welcome pages first.
+    // Show welcome pages first
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    // Show a full-screen fail screen when needed.
+    // Show a full-screen fail screen when needed
     @State private var showFailureScreen = false
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
 
-    // Track when app went to background during a focus.
+    // Track when app went to background during a focus
     @State private var backgroundStart: Date? = nil
     @State private var wasFocusingWhenBackgrounded = false
 
-    // True while device is locked.
+    // True while device is locked
     @State private var protectedDataUnavailable = false
 
-    // Run recovery only once.
+    // Run recovery only once
     @State private var didRunRecovery = false
 
-    // Switch welcome pages every few seconds.
+    // Switch welcome pages every few seconds
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     // Small grace time: quick return does not fail.
@@ -58,7 +58,7 @@ struct ContentView: View {
     }
 
     var body: some View {
-        // Background + either welcome or tabs.
+        // Background + either welcome or tabs
         ZStack {
             LinearGradient(
                 gradient: Gradient(colors: gradientColors),
@@ -120,14 +120,14 @@ struct ContentView: View {
                 backgroundStart = nil
                 wasFocusingWhenBackgrounded = false
 
-                // Update timer if app was paused.
+                // Update timer if app was paused
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
                 break
 
             case .background:
-                // Track background time only during a focus.
+                // Track background time only during a focus
                 if sessionTimer.isFocusing {
                     wasFocusingWhenBackgrounded = true
                     backgroundStart = Date()
@@ -164,17 +164,17 @@ struct ContentView: View {
 
     // MARK: - Decide failure when returning
 
-    // Decide if coming back from background should fail.
+    // Decide if coming back from background should fail
     private func decideFailureOnReturnToActive() {
         guard let start = backgroundStart else { return }
         let away = Date().timeIntervalSince(start)
 
-        // Quick return: treat as lock/unlock (no fail).
+        // Quick return: treat as lock/unlock (no fail)
         if away < failThresholdSeconds {
             return
         }
 
-        // On real devices, allow screen lock.
+        // On real devices, allow screen lock
         #if !targetEnvironment(simulator)
         let locked = protectedDataUnavailable || (UIApplication.shared.isProtectedDataAvailable == false)
         if locked { return }
