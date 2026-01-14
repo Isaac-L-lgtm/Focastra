@@ -10,7 +10,6 @@ import SwiftUI
 import Combine
 import UIKit
 
-// gradient colours for background.
 let gradientColors: [Color] = [
     .gradientTop,
     .gradientMiddle,
@@ -18,7 +17,6 @@ let gradientColors: [Color] = [
     .gradientBottom
 ]
 
-// currentPage: 0 and 1 - loading screen
 struct ContentView: View {
 
     @Environment(\.scenePhase) private var scenePhase
@@ -27,7 +25,7 @@ struct ContentView: View {
     @State private var showLoading = true
     @State private var currentPage = 0
 
-    // ✅ More reliable lock signal (notifications can be flaky on Simulator)
+    // ✅ Protected data signals (real device lock detection)
     @State private var protectedDataUnavailable = false
 
     // ✅ Show failure screen after force-close
@@ -35,7 +33,9 @@ struct ContentView: View {
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
 
-    // every 3 seconds, auto-advance loading pages
+    // Prevent repeat recovery
+    @State private var didRunRecovery = false
+
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -48,7 +48,6 @@ struct ContentView: View {
             )
             .ignoresSafeArea()
 
-            // Loading
             if showLoading {
                 TabView(selection: $currentPage) {
                     WelcomePage().tag(0)
@@ -59,11 +58,7 @@ struct ContentView: View {
                 .onReceive(timer) { _ in
                     withAnimation { currentPage = (currentPage + 1) % 2 }
                 }
-                .transition(.opacity.combined(with: .scale))
-            }
-
-            // Main App
-            if !showLoading {
+            } else {
                 TabView(selection: $currentPage) {
                     HomePage(tabSelection: $currentPage)
                         .tabItem { Label("Home", systemImage: "star.fill") }
@@ -77,12 +72,10 @@ struct ContentView: View {
                         .tabItem { Label("Stats", systemImage: "chart.bar.xaxis") }
                         .tag(2)
                 }
-                .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 1.0), value: showLoading)
 
-        // ✅ Lock/unlock notifications (helpful when they work)
+        // ✅ These notifications help on real devices
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
             protectedDataUnavailable = true
         }
@@ -90,20 +83,19 @@ struct ContentView: View {
             protectedDataUnavailable = false
         }
 
-        // ✅ GLOBAL RULES:
-        // - switching apps -> fail
-        // - locking phone -> allowed
+        // ✅ Global: handle leaving app while focusing (from ANY screen)
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
+
             case .active:
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
-                // Lock screen / control center often triggers inactive first (allowed)
+                // allowed (lock screen often triggers inactive first)
                 break
 
             case .background:
-                // If we're focusing, decide whether this background should fail.
+                // If focusing, decide fail vs allow after a short grace delay
                 if sessionTimer.isFocusing {
                     decideFailOrAllowAfterBackground()
                 }
@@ -113,39 +105,39 @@ struct ContentView: View {
             }
         }
 
-        // ✅ Run recovery IMMEDIATELY on launch (force-close detection)
-        .onAppear {
+        // ✅ Use .task so this runs when view is actually on screen (reliable cover)
+        .task {
+            if didRunRecovery { return }
+            didRunRecovery = true
+
             runLaunchRecoveryNow()
 
-            // keep your loading behavior
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                withAnimation { showLoading = false }
-            }
+            // keep your loading (still shows pages briefly)
+            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 sec
+            withAnimation { showLoading = false }
         }
 
-        // ✅ Show failure screen after relaunch
-        // (this can appear even while loading is shown)
+        // ✅ Always able to show failure screen after force-close
         .fullScreenCover(isPresented: $showFailureScreen) {
             FocusSessionView(durationMinutes: failureDurationMinutes, scheduled: failureSession)
                 .environmentObject(sessionTimer)
         }
     }
 
-    // MARK: - Background decision
+    // MARK: - Decide fail vs allow (lock vs switch apps)
 
     private func decideFailOrAllowAfterBackground() {
-        // Wait a bit so lock signals can update
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
             // If session already ended, do nothing
             if !sessionTimer.isFocusing { return }
 
-            // ✅ Strong lock check:
-            // When locked, protected data is unavailable.
-            let locked =
+            // ✅ Real device lock detection:
+            // If protected data is unavailable, the phone is locked -> allow
+            let lockedRealDevice =
                 protectedDataUnavailable ||
                 (UIApplication.shared.isProtectedDataAvailable == false)
 
-            if locked {
+            if lockedRealDevice {
                 // Lock is allowed -> do not fail
                 return
             }
@@ -155,7 +147,7 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Launch recovery (force-close)
+    // MARK: - Force-close recovery
 
     private func runLaunchRecoveryNow() {
         // Clean missed sessions
@@ -166,13 +158,12 @@ struct ContentView: View {
         // If app was closed during an active focus session -> fail it now
         if var snap = loadCurrentSessionSnapshot(), snap.isActive {
 
-            // Mark snapshot as failed
             snap.isActive = false
             snap.didSucceed = false
             snap.didFail = true
             saveCurrentSessionSnapshot(snap)
 
-            // Mark scheduled session failed if linked
+            // Mark scheduled session failed (if linked)
             if let id = snap.scheduledSessionID {
                 var sessions2 = loadScheduledSessions()
                 if let idx = sessions2.firstIndex(where: { $0.id == id }) {
@@ -181,23 +172,23 @@ struct ContentView: View {
 
                     failureSession = sessions2[idx]
                     failureDurationMinutes = sessions2[idx].durationMinutes
-                    showFailureScreen = true
                 } else {
-                    // Can't find session, still show failure screen
                     failureSession = nil
                     failureDurationMinutes = 30
-                    showFailureScreen = true
                 }
             } else {
-                // No ID, still show failure screen
                 failureSession = nil
                 failureDurationMinutes = 30
-                showFailureScreen = true
             }
 
-            // Stop timer state just in case
+            // Stop timer just in case
             if sessionTimer.isFocusing {
                 sessionTimer.endEarly()
+            }
+
+            // ✅ Show the failure view
+            DispatchQueue.main.async {
+                showFailureScreen = true
             }
         }
     }
@@ -205,14 +196,11 @@ struct ContentView: View {
     // MARK: - Helper fail
 
     private func failActiveSessionBecauseUserLeftApp() {
-        // mark snapshot failure
         var snap = loadCurrentSessionSnapshot()
         markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
 
-        // stop timer UI
         sessionTimer.endEarly()
 
-        // mark scheduled session failed (if linked)
         if let id = snap?.scheduledSessionID {
             var sessions = loadScheduledSessions()
             if let idx = sessions.firstIndex(where: { $0.id == id }) {
@@ -221,10 +209,4 @@ struct ContentView: View {
             }
         }
     }
-}
-
-#Preview {
-    ContentView()
-        .environmentObject(FocusSessionPlanner())
-        .environmentObject(FocusSessionTimer())
 }
