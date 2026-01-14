@@ -2,6 +2,7 @@
 //  ContentView.swift
 //  Focastra
 //
+//  FINAL
 
 // Main screen: shows welcome, tabs, and handles session recovery/failure
 
