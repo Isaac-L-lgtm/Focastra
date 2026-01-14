@@ -7,19 +7,19 @@
 
 import SwiftUI
 
-// WIP
+
 struct SelectTimesView: View {
 
     // Receive the chosen dates as a value
     let selectedDates: Set<DateComponents>
 
-    // Write the chosen start time back to HomePage
+    // Chosen start time
     @Binding var selectedStartTime: Date?
 
-    // Write the chosen duration (in minutes) back to HomePage
+    // Chosen duration in minutes
     @Binding var selectedDurationMinutes: Int?
 
-    // Control whether SelectDatesView is active (provided by HomePage)
+    // Control whether SelectDatesView is active
     @Binding var goToSelectDatesActive: Bool
 
     @Environment(\.dismiss) private var dismiss
@@ -28,7 +28,7 @@ struct SelectTimesView: View {
     @State private var durationTime = "30 mins"
 
     private let durationOptions: [(label: String, minutes: Int)] = [
-        ("1 mins", 1), // remove later if you want
+        ("10 secs", 0), // remove
         ("30 mins", 30),
         ("1 hour", 60),
         ("1 hour 30 mins", 90),
@@ -80,12 +80,11 @@ struct SelectTimesView: View {
                 Spacer()
 
                 Button(action: {
-                    // 1) Save chosen time + duration back to Home (for UI only)
+                    // Save chosen time + duration back to Home (for UI only)
                     selectedStartTime = selectedTime
                     let minutes = durationOptions.first(where: { $0.label == durationTime })?.minutes ?? 30
                     selectedDurationMinutes = minutes
 
-                    // 2) Build and save real ScheduledSession objects (this is the "source of truth")
                     var sessions = loadScheduledSessions()
                     let cal = Calendar.current
 
@@ -114,7 +113,7 @@ struct SelectTimesView: View {
                     removeMissedSessionsForToday(&sessions, now: Date())
                     saveScheduledSessions(sessions)
 
-                    // 3) Go back to Home
+                    // Go back to Home
                     goToSelectDatesActive = false
                     dismiss()
                 }) {
