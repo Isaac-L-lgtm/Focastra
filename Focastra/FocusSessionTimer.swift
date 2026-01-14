@@ -19,14 +19,13 @@ final class FocusSessionTimer: ObservableObject {
     private var endDate: Date? = nil
     private var timer: Timer? = nil
 
-    // ✅ UserDefaults keys (simple persistence)
+    // ✅ Persistence keys (simple + beginner friendly)
     private let endDateKey = "focastra_endDate"
     private let wasFocusingKey = "focastra_wasFocusing"
 
     // MARK: - Start
 
     func start(durationMinutes: Int) {
-        // Avoid double-start
         guard !isFocusing, timer == nil else { return }
 
         selectedDurationMinutes = durationMinutes
@@ -40,13 +39,13 @@ final class FocusSessionTimer: ObservableObject {
         endDate = newEndDate
         timeRemaining = durationSeconds
 
-        // ✅ Persist immediately so force-close still has data
+        // ✅ Persist immediately (so force-close still leaves evidence)
         saveEndDateToUserDefaults(newEndDate)
 
         startInternalTimer()
     }
 
-    // MARK: - Restore (from snapshot endDate)
+    // MARK: - Restore
 
     func restoreFromEndDate(_ savedEndDate: Date) {
         guard !isFocusing else { return }
@@ -66,11 +65,9 @@ final class FocusSessionTimer: ObservableObject {
         }
     }
 
-    // MARK: - Recovery helper (for force-close)
+    // MARK: - Force-close detection
 
-    /// Call this on app launch. If an endDate is saved and still in the future,
-    /// we know a session WAS running when the app got killed.
-    /// Returns true if there was an active timer saved.
+    /// True if we have a saved endDate in the future and the app previously marked "was focusing".
     func hadActiveTimerWhenAppClosed() -> Bool {
         let wasFocusing = UserDefaults.standard.bool(forKey: wasFocusingKey)
         guard wasFocusing else { return false }
@@ -79,16 +76,14 @@ final class FocusSessionTimer: ObservableObject {
             return false
         }
 
-        // If endDate is still in the future, it was active when app closed
         return savedEndDate.timeIntervalSinceNow > 0
     }
 
-    /// Optional: get the saved endDate if you want it
     func getSavedEndDate() -> Date? {
         return UserDefaults.standard.object(forKey: endDateKey) as? Date
     }
 
-    // MARK: - Timer internals
+    // MARK: - Internal timer
 
     private func startInternalTimer() {
         timer?.invalidate()
@@ -130,7 +125,6 @@ final class FocusSessionTimer: ObservableObject {
         endDate = nil
         timeRemaining = 0
 
-        // ✅ Clear persisted timer
         clearEndDateFromUserDefaults()
     }
 
@@ -142,7 +136,6 @@ final class FocusSessionTimer: ObservableObject {
         endDate = nil
         timeRemaining = 0
 
-        // ✅ Clear persisted timer
         clearEndDateFromUserDefaults()
     }
 
@@ -166,8 +159,6 @@ final class FocusSessionTimer: ObservableObject {
     private func saveEndDateToUserDefaults(_ date: Date) {
         UserDefaults.standard.set(true, forKey: wasFocusingKey)
         UserDefaults.standard.set(date, forKey: endDateKey)
-
-        // ✅ helps make force-close more reliable
         UserDefaults.standard.synchronize()
     }
 
