@@ -10,10 +10,8 @@ import Combine
 
 
 final class FocusSessionPlanner: ObservableObject {
-    // Days chosen in the calendar
+    // Saves dates, times, and duration for each focus session
     @Published var selectedDates: Set<DateComponents> = []
-
-    // Optional: store time and duration chosen later
     @Published var startTime: Date? = nil
     @Published var durationLabel: String? = nil
 }
