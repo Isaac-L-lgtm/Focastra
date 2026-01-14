@@ -34,9 +34,7 @@ struct ScheduledSession: Identifiable, Codable, Equatable {
     }
 }
 
-// Snapshot of a currently running session for persistence.
-// This lets you restore remaining time and outcome after relaunch.
-// Keep it minimal and separate from your existing timer class.
+// Model for one focus session that can be saved
 struct PersistedCurrentSession: Codable, Equatable {
     var isActive: Bool
     var endDate: Date
