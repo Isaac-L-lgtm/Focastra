@@ -7,7 +7,7 @@
 
 import SwiftUI
 
-//WIP
+//Coming soon
 struct CustomizePage: View {
     var body: some View {
         ZStack {
