@@ -2,8 +2,6 @@
 //  FocusSessionTimer.swift
 //  Focastra
 //
-//  Created by Isaac Law on 2025-12-16.
-//
 
 import Foundation
 import Combine
@@ -19,11 +17,9 @@ final class FocusSessionTimer: ObservableObject {
     private var endDate: Date? = nil
     private var timer: Timer? = nil
 
-    // ✅ Persistence keys (simple + beginner friendly)
+    // Persistence keys
     private let endDateKey = "focastra_endDate"
     private let wasFocusingKey = "focastra_wasFocusing"
-
-    // MARK: - Start
 
     func start(durationMinutes: Int) {
         guard !isFocusing, timer == nil else { return }
@@ -39,13 +35,9 @@ final class FocusSessionTimer: ObservableObject {
         endDate = newEndDate
         timeRemaining = durationSeconds
 
-        // ✅ Persist immediately (so force-close still leaves evidence)
         saveEndDateToUserDefaults(newEndDate)
-
         startInternalTimer()
     }
-
-    // MARK: - Restore
 
     func restoreFromEndDate(_ savedEndDate: Date) {
         guard !isFocusing else { return }
@@ -65,25 +57,26 @@ final class FocusSessionTimer: ObservableObject {
         }
     }
 
-    // MARK: - Force-close detection
-
-    /// True if we have a saved endDate in the future and the app previously marked "was focusing".
     func hadActiveTimerWhenAppClosed() -> Bool {
         let wasFocusing = UserDefaults.standard.bool(forKey: wasFocusingKey)
         guard wasFocusing else { return false }
-
-        guard let savedEndDate = UserDefaults.standard.object(forKey: endDateKey) as? Date else {
-            return false
-        }
-
+        guard let savedEndDate = UserDefaults.standard.object(forKey: endDateKey) as? Date else { return false }
         return savedEndDate.timeIntervalSinceNow > 0
     }
 
-    func getSavedEndDate() -> Date? {
-        return UserDefaults.standard.object(forKey: endDateKey) as? Date
-    }
+    // ✅ NEW: use this when ContentView detects force-close failure
+    func forceFailUIState() {
+        timer?.invalidate()
+        timer = nil
 
-    // MARK: - Internal timer
+        isFocusing = false
+        sessionComplete = true
+        rewardEarned = false
+        timeRemaining = 0
+
+        endDate = nil
+        clearEndDateFromUserDefaults()
+    }
 
     private func startInternalTimer() {
         timer?.invalidate()
@@ -112,8 +105,6 @@ final class FocusSessionTimer: ObservableObject {
         }
     }
 
-    // MARK: - Failure / Success
-
     func endEarly() {
         timer?.invalidate()
         timer = nil
@@ -139,8 +130,6 @@ final class FocusSessionTimer: ObservableObject {
         clearEndDateFromUserDefaults()
     }
 
-    // MARK: - Resync
-
     func resyncIfNeeded() {
         guard isFocusing, let endDate else { return }
 
@@ -153,8 +142,6 @@ final class FocusSessionTimer: ObservableObject {
             completeSession()
         }
     }
-
-    // MARK: - UserDefaults helpers
 
     private func saveEndDateToUserDefaults(_ date: Date) {
         UserDefaults.standard.set(true, forKey: wasFocusingKey)
