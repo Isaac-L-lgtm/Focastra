@@ -2,9 +2,6 @@
 //  ContentView.swift
 //  Focastra
 //
-//  Created by Isaac Law on 2025-10-20.
-//  FINAL
-//
 
 import SwiftUI
 import Combine
@@ -29,20 +26,22 @@ struct ContentView: View {
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
 
-    // ✅ Real-device lock signals
-    @State private var protectedDataUnavailable = false
+    // ✅ Track background time (so we can fail when app returns)
+    @State private var backgroundStart: Date? = nil
+    @State private var wasFocusingWhenBackgrounded = false
 
-    // ✅ Cancelable failure task
-    @State private var pendingFailWorkItem: DispatchWorkItem? = nil
+    // ✅ Real device lock signal (works best on iPhone)
+    @State private var protectedDataUnavailable = false
 
     @State private var didRunRecovery = false
 
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
 
-    // ✅ Simulator needs longer grace window because "lock" isn't real lock
-    private var backgroundFailDelay: Double {
+    // ✅ Threshold: if you come back BEFORE this, we treat it like lock/unlock.
+    // On Simulator, lock acts weird, so give it more time.
+    private var failThresholdSeconds: Double {
         #if targetEnvironment(simulator)
-        return 6.0
+        return 2.5
         #else
         return 0.8
         #endif
@@ -85,7 +84,7 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 1.0), value: showLoading)
 
-        // ✅ Lock/unlock notifications (real iPhone is best here)
+        // ✅ Lock/unlock notifications (reliable on real iPhone)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
             protectedDataUnavailable = true
         }
@@ -93,46 +92,38 @@ struct ContentView: View {
             protectedDataUnavailable = false
         }
 
+        // ✅ Scene rules
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
 
             case .active:
-                // coming back cancels pending fail (lock/unlock should do this)
-                pendingFailWorkItem?.cancel()
-                pendingFailWorkItem = nil
+                // If we came back and we HAD been focusing when backgrounded, decide fail now.
+                if wasFocusingWhenBackgrounded {
+                    decideFailureOnReturnToActive()
+                }
+
+                // reset tracking
+                backgroundStart = nil
+                wasFocusingWhenBackgrounded = false
+
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
-                // allowed
                 break
 
             case .background:
-                guard sessionTimer.isFocusing else { return }
-
-                // ✅ On real devices: if locked, DO NOT fail
-                #if !targetEnvironment(simulator)
-                let locked = protectedDataUnavailable || (UIApplication.shared.isProtectedDataAvailable == false)
-                if locked { return }
-                #endif
-
-                // Schedule fail after delay (Simulator needs longer)
-                pendingFailWorkItem?.cancel()
-
-                let work = DispatchWorkItem {
-                    // If we are STILL focusing after delay, treat as leaving app
-                    if sessionTimer.isFocusing {
-                        failActiveSessionBecauseUserLeftApp()
-                    }
+                // record background only if focusing
+                if sessionTimer.isFocusing {
+                    wasFocusingWhenBackgrounded = true
+                    backgroundStart = Date()
                 }
-
-                pendingFailWorkItem = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + backgroundFailDelay, execute: work)
 
             @unknown default:
                 break
             }
         }
 
+        // ✅ Launch recovery (force-close)
         .task {
             if didRunRecovery { return }
             didRunRecovery = true
@@ -143,6 +134,7 @@ struct ContentView: View {
             withAnimation { showLoading = false }
         }
 
+        // ✅ Failure screen after force-close
         .fullScreenCover(isPresented: $showFailureScreen) {
             FocusSessionView(
                 durationMinutes: failureDurationMinutes,
@@ -153,9 +145,31 @@ struct ContentView: View {
         }
     }
 
-    // MARK: - Launch Recovery
+    // MARK: - Decide failure when returning
+
+    private func decideFailureOnReturnToActive() {
+        guard let start = backgroundStart else { return }
+        let away = Date().timeIntervalSince(start)
+
+        // If away time is tiny, treat like lock/unlock → allowed
+        if away < failThresholdSeconds {
+            return
+        }
+
+        // Real device: if it was a lock, allow it
+        #if !targetEnvironment(simulator)
+        let locked = protectedDataUnavailable || (UIApplication.shared.isProtectedDataAvailable == false)
+        if locked { return }
+        #endif
+
+        // Otherwise: treat as switching apps → FAIL
+        failActiveSessionBecauseUserLeftApp()
+    }
+
+    // MARK: - Launch recovery (force-close)
 
     private func runLaunchRecoveryNow() {
+        // Clean missed sessions
         var sessions = loadScheduledSessions()
         removeMissedSessionsForToday(&sessions, now: Date())
         saveScheduledSessions(sessions)
@@ -184,22 +198,20 @@ struct ContentView: View {
                 failureDurationMinutes = 30
             }
 
-            if sessionTimer.isFocusing {
-                sessionTimer.endEarly()
-            }
+            // ✅ IMPORTANT: show “failed” state in UI
+            sessionTimer.forceFailUIState()
 
             showFailureScreen = true
             return
         }
 
-        // Timer-based recovery fallback
+        // Timer-based fallback recovery
         if sessionTimer.hadActiveTimerWhenAppClosed() {
             failureSession = nil
             failureDurationMinutes = 30
 
-            if sessionTimer.isFocusing {
-                sessionTimer.endEarly()
-            }
+            // ✅ IMPORTANT: show “failed” state in UI
+            sessionTimer.forceFailUIState()
 
             showFailureScreen = true
         }
@@ -211,7 +223,7 @@ struct ContentView: View {
         var snap = loadCurrentSessionSnapshot()
         markBackgroundFailureForSnapshot(snapshot: &snap, onFailure: {})
 
-        sessionTimer.endEarly()
+        sessionTimer.endEarly() // sets sessionComplete true + reward false
 
         if let id = snap?.scheduledSessionID {
             var sessions = loadScheduledSessions()
