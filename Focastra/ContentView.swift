@@ -29,12 +29,24 @@ struct ContentView: View {
     @State private var failureSession: ScheduledSession? = nil
     @State private var failureDurationMinutes: Int = 30
 
-    // ✅ Background grace handling
-    @State private var pendingBackgroundFail = false
+    // ✅ Real-device lock signals
+    @State private var protectedDataUnavailable = false
+
+    // ✅ Cancelable failure task
+    @State private var pendingFailWorkItem: DispatchWorkItem? = nil
 
     @State private var didRunRecovery = false
 
     let timer = Timer.publish(every: 3, on: .main, in: .common).autoconnect()
+
+    // ✅ Simulator needs longer grace window because "lock" isn't real lock
+    private var backgroundFailDelay: Double {
+        #if targetEnvironment(simulator)
+        return 6.0
+        #else
+        return 0.8
+        #endif
+    }
 
     var body: some View {
         ZStack {
@@ -73,12 +85,21 @@ struct ContentView: View {
         }
         .animation(.easeInOut(duration: 1.0), value: showLoading)
 
+        // ✅ Lock/unlock notifications (real iPhone is best here)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
+            protectedDataUnavailable = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            protectedDataUnavailable = false
+        }
+
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
 
             case .active:
-                // ✅ Coming back cancels any pending failure (lock/unlock should do this)
-                pendingBackgroundFail = false
+                // coming back cancels pending fail (lock/unlock should do this)
+                pendingFailWorkItem?.cancel()
+                pendingFailWorkItem = nil
                 sessionTimer.resyncIfNeeded()
 
             case .inactive:
@@ -86,16 +107,26 @@ struct ContentView: View {
                 break
 
             case .background:
-                if sessionTimer.isFocusing {
-                    pendingBackgroundFail = true
+                guard sessionTimer.isFocusing else { return }
 
-                    // ✅ Longer grace window helps lock on simulator not instantly fail
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                        if pendingBackgroundFail && sessionTimer.isFocusing {
-                            failActiveSessionBecauseUserLeftApp()
-                        }
+                // ✅ On real devices: if locked, DO NOT fail
+                #if !targetEnvironment(simulator)
+                let locked = protectedDataUnavailable || (UIApplication.shared.isProtectedDataAvailable == false)
+                if locked { return }
+                #endif
+
+                // Schedule fail after delay (Simulator needs longer)
+                pendingFailWorkItem?.cancel()
+
+                let work = DispatchWorkItem {
+                    // If we are STILL focusing after delay, treat as leaving app
+                    if sessionTimer.isFocusing {
+                        failActiveSessionBecauseUserLeftApp()
                     }
                 }
+
+                pendingFailWorkItem = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + backgroundFailDelay, execute: work)
 
             @unknown default:
                 break
@@ -113,7 +144,6 @@ struct ContentView: View {
         }
 
         .fullScreenCover(isPresented: $showFailureScreen) {
-            // ✅ IMPORTANT: allowStarting false so user can’t restart from failure screen
             FocusSessionView(
                 durationMinutes: failureDurationMinutes,
                 scheduled: failureSession,
@@ -166,9 +196,11 @@ struct ContentView: View {
         if sessionTimer.hadActiveTimerWhenAppClosed() {
             failureSession = nil
             failureDurationMinutes = 30
+
             if sessionTimer.isFocusing {
                 sessionTimer.endEarly()
             }
+
             showFailureScreen = true
         }
     }
