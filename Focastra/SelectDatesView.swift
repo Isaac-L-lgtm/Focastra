@@ -7,17 +7,15 @@
 
 import SwiftUI
 
-//WIP
+
 struct SelectDatesView: View {
     @Environment(\.dismiss) private var dismiss
     
     // Binding from HomePage
     @Binding var selectedDates: Set<DateComponents>
-    // New: pass the chosen start time back to HomePage
+    // Chosen start time
     @Binding var selectedStartTime: Date?
-    // New: pass the chosen duration (minutes) back to HomePage
     @Binding var selectedDurationMinutes: Int?
-    // New: control the activation of this SelectDatesView from HomePage
     @Binding var goToSelectDatesActive: Bool
     
     @State private var goToTimes = false
