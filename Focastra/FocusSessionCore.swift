@@ -9,7 +9,6 @@ import Foundation
 
 // MARK: - Models
 
-// A simple scheduled session model you can store.
 // - id: unique identifier
 // - scheduledDate: when it should start
 // - durationMinutes: how long it should run
@@ -40,8 +39,7 @@ struct PersistedCurrentSession: Codable, Equatable {
     var endDate: Date
     var didSucceed: Bool
     var didFail: Bool
-
-    // NEW (optional) so old data still loads
+    
     var scheduledSessionID: UUID?
 }
 
@@ -70,7 +68,7 @@ func saveScheduledSessions(_ sessions: [ScheduledSession]) {
         let data = try encoder.encode(sessions)
         defaults.set(data, forKey: kScheduledSessionsKey)
     } catch {
-        // Ignore errors for simplicity
+        // Ignore write errors
     }
 }
 
@@ -128,7 +126,7 @@ func removeMissedSessionsForToday(_ sessions: inout [ScheduledSession], now: Dat
 }
 
 // Call this when the user actually presses "Start" and you begin your existing timer.
-// It returns a snapshot you can save for restoration later.
+// It returns a snapshot.
 func makeCurrentSessionSnapshot(durationMinutes: Int, start: Date, scheduledSessionID: UUID?) -> PersistedCurrentSession {
     let end = start.addingTimeInterval(TimeInterval(durationMinutes * 60))
     return PersistedCurrentSession(isActive: true,
@@ -138,15 +136,13 @@ func makeCurrentSessionSnapshot(durationMinutes: Int, start: Date, scheduledSess
                                    scheduledSessionID: scheduledSessionID)
 }
 
-// Recompute remaining seconds from a snapshot and "now" (pure helper).
 func remainingSeconds(from snapshot: PersistedCurrentSession, now: Date) -> Int {
     max(0, Int(snapshot.endDate.timeIntervalSince(now).rounded(.down)))
 }
 
-// Handle scene phase transitions for success/failure with your existing timer:
+// Handle scene phase transitions for success/failure with existing timer:
 // - On active: recompute remaining; if zero, success.
 // - On background: if still active, failure immediately.
-// Note: You still use your FocusSessionTimer to maintain seconds; this only updates persistence flags.
 func handleScenePhaseForSnapshot(
     snapshot: inout PersistedCurrentSession?,
     onActive: () -> Void,
