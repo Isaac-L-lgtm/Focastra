@@ -21,7 +21,7 @@ let gradientColors: [Color] = [
 struct ContentView: View {
 
     // Shared app state
-    // - scenePhase: app state (active/background)
+    // - scenePhase: track whenther the app is active, inactive, or in background
     // - sessionTimer: timer data for focus sessions
     @Environment(\.scenePhase) private var scenePhase
     @EnvironmentObject private var sessionTimer: FocusSessionTimer
@@ -106,7 +106,7 @@ struct ContentView: View {
             protectedDataUnavailable = false
         }
 
-        // Handle app state changes and keep timer in sync.
+        // Runs this code when app state changes
         .onChange(of: scenePhase) { _, newPhase in
             switch newPhase {
 
