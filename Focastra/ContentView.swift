@@ -87,9 +87,9 @@ struct ContentView: View {
                         .tabItem { Label("Home", systemImage: "star.fill") }
                         .tag(0)
 
-                    CustomizePage()
-                        .tabItem { Label("Customize", systemImage: "paintbrush.pointed.fill") }
-                        .tag(1)
+                    // CustomizePage()
+                    //     .tabItem { Label("Customize", systemImage: "paintbrush.pointed.fill") }
+                    //     .tag(1)
 
                     StatsPage()
                         .tabItem { Label("Stats", systemImage: "chart.bar.xaxis") }
