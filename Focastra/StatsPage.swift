@@ -7,6 +7,7 @@
 
 
 import SwiftUI
+import Combine
 
 struct StatsPage: View {
     @State private var sessions: [ScheduledSession] = []
@@ -16,8 +17,6 @@ struct StatsPage: View {
     private func refresh() {
         sessions = loadScheduledSessions()
     }
-
-    // MARK: - Stats
 
     private var finishedSessions: [ScheduledSession] {
         sessions
@@ -45,7 +44,6 @@ struct StatsPage: View {
     }
 
     private var totalFocusMinutes: Int {
-        // Total time from successful sessions
         sessions
             .filter { $0.status == .completed }
             .reduce(0) { $0 + $1.durationMinutes }
@@ -85,11 +83,7 @@ struct StatsPage: View {
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            Gradient(colors: gradientColors)
-                .ignoresSafeArea(edges: .bottom)
-
             VStack(spacing: 16) {
-                // Title
                 HStack {
                     Text("Stats")
                         .font(.custom("Impact", size: 55))
@@ -99,7 +93,6 @@ struct StatsPage: View {
                 .padding(.top, 90)
                 .padding(.horizontal, 25)
 
-                // Cards grid (2 columns)
                 VStack(spacing: 14) {
                     HStack(spacing: 14) {
                         statCard(title: "Current Streak", value: "\(currentStreak)", icon: "flame.fill")
@@ -122,13 +115,14 @@ struct StatsPage: View {
 
                 Spacer()
 
-                // Logo (same style placement idea as HomePage)
                 AppLogo()
                     .padding(.leading, -20)
                     .padding(.bottom, 40)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+        .ignoresSafeArea(edges: .bottom)
+        .background(Gradient(colors: gradientColors))
         .onAppear { refresh() }
         .onReceive(nowTimer) { _ in
             now = Date()
