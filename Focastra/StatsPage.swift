@@ -1,4 +1,11 @@
-// // StatsPage.swift // Focastra // // Created by Isaac Law on 2025-11-11. // import SwiftUI //WIP
+//
+//  StatsPage.swift
+//  Focastra
+//
+//  Created by Isaac Law on 2025-11-11.
+//
+
+
 import SwiftUI
 import Combine
 
