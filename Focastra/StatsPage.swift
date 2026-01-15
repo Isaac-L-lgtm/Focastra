@@ -1,11 +1,4 @@
-//
-//  StatsPage.swift
-//  Focastra
-//
-//  Created by Isaac Law on 2025-11-11.
-//
-
-
+// // StatsPage.swift // Focastra // // Created by Isaac Law on 2025-11-11. // import SwiftUI //WIP
 import SwiftUI
 import Combine
 
@@ -17,6 +10,8 @@ struct StatsPage: View {
     private func refresh() {
         sessions = loadScheduledSessions()
     }
+
+    // MARK: - Stats
 
     private var finishedSessions: [ScheduledSession] {
         sessions
