@@ -21,6 +21,10 @@ final class FocusSessionTimer: ObservableObject {
     private let endDateKey = "focastra_endDate"
     private let wasFocusingKey = "focastra_wasFocusing"
 
+    private let streakKey = "focastra_streak"
+
+    // MARK: - Public
+
     func start(durationMinutes: Int) {
         guard !isFocusing, timer == nil else { return }
 
@@ -73,10 +77,57 @@ final class FocusSessionTimer: ObservableObject {
         sessionComplete = true
         rewardEarned = false
         timeRemaining = 0
-
         endDate = nil
+
         clearEndDateFromUserDefaults()
+
+        // fail -> streak = 0
+        setStreak(0)
     }
+
+    func endEarly() {
+        timer?.invalidate()
+        timer = nil
+
+        isFocusing = false
+        sessionComplete = true
+        rewardEarned = false
+        endDate = nil
+        timeRemaining = 0
+
+        clearEndDateFromUserDefaults()
+
+        // fail -> streak = 0
+        setStreak(0)
+    }
+
+    func completeSession() {
+        isFocusing = false
+        sessionComplete = true
+        rewardEarned = true
+        endDate = nil
+        timeRemaining = 0
+
+        clearEndDateFromUserDefaults()
+
+        // success -> streak + 1
+        addToStreak()
+    }
+
+    func resyncIfNeeded() {
+        guard isFocusing, let endDate else { return }
+
+        let remaining = Int(endDate.timeIntervalSinceNow.rounded(.down))
+        if remaining > 0 {
+            timeRemaining = remaining
+        } else {
+            timer?.invalidate()
+            timer = nil
+            completeSession()
+        }
+    }
+
+    // MARK: - Internal Timer
 
     private func startInternalTimer() {
         timer?.invalidate()
@@ -105,43 +156,7 @@ final class FocusSessionTimer: ObservableObject {
         }
     }
 
-    func endEarly() {
-        timer?.invalidate()
-        timer = nil
-
-        isFocusing = false
-        sessionComplete = true
-        rewardEarned = false
-
-        endDate = nil
-        timeRemaining = 0
-
-        clearEndDateFromUserDefaults()
-    }
-
-    func completeSession() {
-        isFocusing = false
-        sessionComplete = true
-        rewardEarned = true
-
-        endDate = nil
-        timeRemaining = 0
-
-        clearEndDateFromUserDefaults()
-    }
-
-    func resyncIfNeeded() {
-        guard isFocusing, let endDate else { return }
-
-        let remaining = Int(endDate.timeIntervalSinceNow.rounded(.down))
-        if remaining > 0 {
-            timeRemaining = remaining
-        } else {
-            timer?.invalidate()
-            timer = nil
-            completeSession()
-        }
-    }
+    // MARK: - UserDefaults helpers
 
     private func saveEndDateToUserDefaults(_ date: Date) {
         UserDefaults.standard.set(true, forKey: wasFocusingKey)
@@ -153,5 +168,21 @@ final class FocusSessionTimer: ObservableObject {
         UserDefaults.standard.set(false, forKey: wasFocusingKey)
         UserDefaults.standard.removeObject(forKey: endDateKey)
         UserDefaults.standard.synchronize()
+    }
+
+    // MARK: - Streak helpers
+
+    private func getStreak() -> Int {
+        UserDefaults.standard.integer(forKey: streakKey)
+    }
+
+    private func setStreak(_ value: Int) {
+        UserDefaults.standard.set(value, forKey: streakKey)
+        UserDefaults.standard.synchronize()
+    }
+
+    private func addToStreak() {
+        let current = getStreak()
+        setStreak(current + 1)
     }
 }
