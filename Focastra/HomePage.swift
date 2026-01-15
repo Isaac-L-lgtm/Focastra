@@ -1,15 +1,13 @@
 //
-//  HomePage.swift
-//  Focastra
+// HomePage.swift
+// Focastra
 //
-//  Created by Isaac Law on 2025-11-04.
-//
+// Created by Isaac Law on 2025-11-04.
 
 import SwiftUI
 import Combine
 
 struct HomePage: View {
-
     // Binding to the TabView selection in ContentView
     @Binding var tabSelection: Int
 
@@ -36,6 +34,23 @@ struct HomePage: View {
     @State private var scheduledSessions: [ScheduledSession] = []
     @State private var nextTodaySession: ScheduledSession? = nil
 
+    // ✅ Streak (consecutive successes)
+    @State private var streak: Int = 0
+
+    private func calculateStreak(from sessions: [ScheduledSession]) -> Int {
+        let finished = sessions
+            .filter { $0.status != .scheduled }
+            .sorted { $0.scheduledDate < $1.scheduledDate }
+
+        var count = 0
+
+        for s in finished.reversed() {
+            if s.status == .failed { return 0 }
+            if s.status == .completed { count += 1 }
+        }
+        return count
+    }
+
     private func refreshSessions() {
         var sessions = loadScheduledSessions()
 
@@ -54,16 +69,16 @@ struct HomePage: View {
         // Keep helpers in sync (used when navigating)
         todaySessionStart = nextTodaySession?.scheduledDate
         todaySessionDurationMinutes = nextTodaySession?.durationMinutes
+
+        // ✅ Update streak
+        streak = calculateStreak(from: sessions)
     }
 
     var body: some View {
         NavigationStack {
             ZStack(alignment: .bottom) {
-
                 // User + Icon Button (go to stats tab)
-                Button(action: {
-                    tabSelection = 2
-                }) {
+                Button(action: { tabSelection = 2 }) {
                     VStack(spacing: 1) {
                         Image(systemName: "star.fill")
                             .resizable()
@@ -82,7 +97,6 @@ struct HomePage: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
 
                 VStack(spacing: 20) {
-
                     // Streak Section
                     ZStack {
                         Image(systemName: "flame.fill")
@@ -90,7 +104,7 @@ struct HomePage: View {
                             .foregroundColor(.black)
                             .padding(.top, 50)
 
-                        Text("0")
+                        Text("\(streak)")
                             .font(.custom("Impact", size: 70))
                             .foregroundColor(.streak)
                             .padding(.top, 90)
@@ -128,7 +142,6 @@ struct HomePage: View {
                             goToSelectDates = true
                         }
                     }) {
-
                         // ✅ Button Text (rules)
                         if sessionTimer.isFocusing {
                             HStack {
@@ -187,9 +200,7 @@ struct HomePage: View {
                     Spacer(minLength: 20)
 
                     // Suggested Button
-                    Button(action: {
-                        goToSuggested = true
-                    }) {
+                    Button(action: { goToSuggested = true }) {
                         HStack {
                             Image(systemName: "calendar.badge.plus")
                                 .font(.system(size: 75))
@@ -235,13 +246,9 @@ struct HomePage: View {
                         goToSelectDatesActive: $goToSelectDates
                     ),
                     isActive: $goToSelectDates
-                ) {
-                    EmptyView()
-                }
+                ) { EmptyView() }
 
-                NavigationLink(destination: SuggestedSessionPage(), isActive: $goToSuggested) {
-                    EmptyView()
-                }
+                NavigationLink(destination: SuggestedSessionPage(), isActive: $goToSuggested) { EmptyView() }
 
                 AppLogo()
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
